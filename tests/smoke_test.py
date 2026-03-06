@@ -17,8 +17,15 @@ from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.project_service import ProjectService
+from app.services.record_service import RecordService
 from app.services.session_service import SessionService
 from app.ui.main_window import MainWindow
+
+
+class DummyCaptureService:
+    def capture_screen(self, output_path: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake")
 
 
 class DatabaseSmokeTest(unittest.TestCase):
@@ -54,7 +61,7 @@ class DatabaseSmokeTest(unittest.TestCase):
             self.assertIn("schema_migrations", tables)
 
             versions = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(versions, 3)
+            self.assertEqual(versions, 4)
 
     def test_foreign_keys_enforced(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):
@@ -86,7 +93,7 @@ class DatabaseSmokeTest(unittest.TestCase):
             is_inspiration=True,
         )
         self.assertIsNotNone(self.records.get_by_id(record_id))
-        self.assertTrue(self.records.update(record_id, content="hello2"))
+        self.assertTrue(self.records.update(record_id, content="hello2", timestamp_offset=5))
 
         note_id = self.notes.create(
             session_id=session_id,
@@ -128,11 +135,18 @@ class UISmokeTest(unittest.TestCase):
 
         projects = ProjectRepository(self.db.as_path())
         sessions = SessionRepository(self.db.as_path())
+        records = RecordRepository(self.db.as_path())
+
         project_service = ProjectService(projects)
         session_service = SessionService(sessions, projects)
+        record_service = RecordService(records, sessions, DummyCaptureService())
 
         app = QApplication.instance() or QApplication([])
-        window = MainWindow(project_service=project_service, session_service=session_service)
+        window = MainWindow(
+            project_service=project_service,
+            session_service=session_service,
+            record_service=record_service,
+        )
 
         self.assertEqual(window.nav.count(), 5)
         self.assertEqual(window.stack.count(), 5)

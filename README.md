@@ -1,88 +1,67 @@
-﻿# VideoLearner - Phase 1（项目管理与学习会话状态机）
+﻿# VideoLearner - Phase 2（Record 记录系统：按钮触发版）
 
-当前阶段已打通首个可用闭环：
-创建项目 -> 选择项目 -> 开始学习 -> 结束学习 -> 查看 Session。
+当前阶段已实现：
+- Phase 0：项目骨架 + 数据库骨架
+- Phase 0.5：数据库连接生命周期修复
+- Phase 1：项目管理 + 学习会话状态机
+- Phase 2：Record 记录系统（截图记录 + 灵感文本记录）
 
-## 1. 本阶段已实现
-- ProjectPage 接入 `ProjectService` / `ProjectRepository`：
-  - 项目列表展示
-  - 新建/编辑/删除
-  - 选择当前项目
-- StudyPage 接入 `SessionService` / `SessionRepository`：
-  - 显示当前选中项目
-  - 开始学习（创建 `in_progress` Session）
-  - 结束学习（更新为 `finished` 并写入 `ended_at`）
-  - 显示会话状态、开始/结束时间、会话列表
-- 主窗口维护当前项目状态，并同步到页面
-- SQLite 持久化 Project 与 Session（重启后可读取）
+## 1. Phase 2 范围
+已实现：
+- StudyPage 新增“记录截图”“记录灵感”按钮
+- 记录写入 `records` 表
+- 当前 Session 的 Record 时间线展示
+- 图片写入本地文件系统，数据库仅存路径/元数据
 
-## 2. 状态机规则
-- `not_started -> in_progress -> finished`
-- 同一时刻只允许一个 `in_progress` Session（全局）
-- Session 必须绑定 `project_id`
-- 已有进行中 Session 时，重复开始会被拦截并提示
-
-## 3. 当前阶段不包含
-- 截图
+明确不包含：
 - 全局快捷键
-- OCR
+- Prompt 管理
 - AI 生成
-- Prompt 管理逻辑接入
+- OCR
 
-## 4. 目录（与 Phase 1 相关）
-```text
-app/
-  main.py
-  db/
-    database.py
-    migrations.py
-  services/
-    errors.py
-    project_service.py
-    session_service.py
-    repository_factory.py
-  repositories/
-    project_repository.py
-    session_repository.py
-  ui/
-    main_window.py
-    pages/
-      project_page.py
-      study_page.py
-tests/
-  smoke_test.py
-  phase1_flow_test.py
-```
+## 2. 记录规则
+- `record_type` 当前支持：`image`、`text`
+- 预留后续扩展：`image_text`
+- `timestamp_offset` 记录相对 Session 开始时间（秒）
+- Record 必须绑定当前 `in_progress` Session
+- Session 已 `finished` 后禁止继续记录
 
-## 5. 环境准备
+## 3. 文件系统与数据库分工
+- 图片文件保存路径：
+  - `data/projects/project_{project_id}/assets/session_{session_id}/`
+- 数据库 `records` 表保存：
+  - `session_id`
+  - `record_type`
+  - `content`（文本记录内容）
+  - `file_path`（图片相对路径）
+  - `timestamp_offset`
+  - `created_at`
+  - `metadata_json`
+  - `is_inspiration`
+
+## 4. 环境与运行
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\activate
 python -m pip install -r requirements.txt
-```
-
-## 6. 初始化数据库
-```powershell
 python -m app.db.init_db
-```
-
-## 7. 启动程序
-```powershell
 python -m app.main
 ```
 
-## 8. 运行测试
+## 5. 自动化测试
 ```powershell
 python tests/smoke_test.py
 python tests/phase1_flow_test.py
+python tests/phase2_record_test.py
 python -W error::ResourceWarning tests/smoke_test.py
 ```
 
-## 9. 手工验证步骤（Phase 1）
-1. 进入 `Project` 页面，创建项目（至少填写名称）。
-2. 编辑项目字段：`description/source/goal/tags` 并保存。
-3. 点击“设为当前项目”。
-4. 切到 `Study` 页面，点击“开始学习”。
-5. 再次点击“开始学习”，应提示已有进行中会话。
-6. 点击“结束学习”，会话状态应变为 `finished` 且有 `ended_at`。
-7. 关闭程序后重新打开，项目与 Session 记录仍存在。
+## 6. Phase 2 手工验证
+1. 在 `Project` 页面创建并选择当前项目。
+2. 在 `Study` 页面点击“开始学习”。
+3. 点击“记录灵感”，输入文本后确认。
+4. 点击“记录截图”。
+5. 查看时间线，按时间顺序出现 text/image 记录。
+6. 点击“结束学习”。
+7. 再次点击记录按钮，应提示当前无进行中会话。
+8. 重启应用，确认项目、Session、Record 仍可读取。

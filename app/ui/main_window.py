@@ -9,6 +9,7 @@
 
 from app.models.project import Project
 from app.services.project_service import ProjectService
+from app.services.record_service import RecordService
 from app.services.session_service import SessionService
 from app.ui.pages.homework_page import HomeworkPage
 from app.ui.pages.note_page import NotePage
@@ -22,10 +23,12 @@ class MainWindow(QMainWindow):
         self,
         project_service: ProjectService,
         session_service: SessionService,
+        record_service: RecordService,
     ):
         super().__init__()
         self.project_service = project_service
         self.session_service = session_service
+        self.record_service = record_service
         self.current_project: Project | None = None
 
         self.setWindowTitle("VideoLearner")
@@ -35,7 +38,7 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(180)
 
         self.project_page = ProjectPage(self.project_service)
-        self.study_page = StudyPage(self.session_service)
+        self.study_page = StudyPage(self.session_service, self.record_service)
         self.project_page.project_selected.connect(self._on_project_selected)
 
         self.stack = QStackedWidget()

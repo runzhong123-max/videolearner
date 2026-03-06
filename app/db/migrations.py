@@ -90,6 +90,12 @@ MIGRATIONS: list[tuple[int, Iterable[str]]] = [
             "UPDATE sessions SET status = 'in_progress' WHERE status = 'active';",
         ],
     ),
+    (
+        4,
+        [
+            "ALTER TABLE records ADD COLUMN timestamp_offset INTEGER NOT NULL DEFAULT 0;",
+        ],
+    ),
 ]
 
 

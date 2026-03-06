@@ -11,5 +11,6 @@ class Record:
     content: str
     file_path: str
     created_at: datetime
+    timestamp_offset: int
     metadata_json: str
     is_inspiration: bool
