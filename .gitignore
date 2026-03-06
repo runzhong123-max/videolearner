@@ -1,20 +1,41 @@
-﻿# Python
+﻿# Python bytecode / cache
 __pycache__/
 *.py[cod]
-*.pyo
+*$py.class
 
-# Virtual env
+# Virtual environments
 .venv/
+venv/
+env/
 
-# Local runtime data
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+.coverage
+htmlcov/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime local data (do not commit)
 data/*.db
 data/projects/
 
-# OS / editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# Logs
+*.log
 
-# Test cache
-.pytest_cache/
+# Optional local env config
+.env
+.env.*
+!.env.example
