@@ -96,6 +96,44 @@ MIGRATIONS: list[tuple[int, Iterable[str]]] = [
             "ALTER TABLE records ADD COLUMN timestamp_offset INTEGER NOT NULL DEFAULT 0;",
         ],
     ),
+    (
+        5,
+        [
+            "ALTER TABLE prompt_templates ADD COLUMN system_prompt TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE prompt_templates ADD COLUMN user_prompt TEXT NOT NULL DEFAULT '';",
+            "UPDATE prompt_templates SET system_prompt = content WHERE system_prompt = '' AND content != '';",
+        ],
+    ),
+    (
+        6,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS output_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                project_id INTEGER,
+                session_id INTEGER,
+                summary INTEGER NOT NULL DEFAULT 1,
+                extension INTEGER NOT NULL DEFAULT 1,
+                insight INTEGER NOT NULL DEFAULT 0,
+                history_link INTEGER NOT NULL DEFAULT 0,
+                gap_analysis INTEGER NOT NULL DEFAULT 0,
+                review_questions INTEGER NOT NULL DEFAULT 0,
+                homework INTEGER NOT NULL DEFAULT 0,
+                expression_notes INTEGER NOT NULL DEFAULT 0,
+                evaluation INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_output_profile_scope ON output_profiles(scope);",
+            "CREATE INDEX IF NOT EXISTS idx_output_profile_project_id ON output_profiles(project_id);",
+            "CREATE INDEX IF NOT EXISTS idx_output_profile_session_id ON output_profiles(session_id);",
+        ],
+    ),
 ]
 
 

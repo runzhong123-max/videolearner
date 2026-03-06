@@ -65,26 +65,38 @@ class Phase2RecordTest(unittest.TestCase):
         session = self.session_service.start_session(project.id)
 
         text1 = self.record_service.create_text_record(session.id, "first idea")
-        image = self.record_service.create_image_record(session.id, project.id)
+        image1 = self.record_service.create_image_record(session.id, project.id)
         text2 = self.record_service.create_text_record(session.id, "second idea")
+        image2 = self.record_service.create_image_record(session.id, project.id)
 
         self.assertEqual(text1.record_type, RECORD_TYPE_TEXT)
-        self.assertEqual(image.record_type, RECORD_TYPE_IMAGE)
+        self.assertEqual(image1.record_type, RECORD_TYPE_IMAGE)
         self.assertEqual(text2.record_type, RECORD_TYPE_TEXT)
+        self.assertEqual(image2.record_type, RECORD_TYPE_IMAGE)
 
         records = self.record_service.list_records_by_session(session.id)
-        self.assertEqual(len(records), 3)
-        self.assertEqual([r.record_type for r in records], [RECORD_TYPE_TEXT, RECORD_TYPE_IMAGE, RECORD_TYPE_TEXT])
+        self.assertEqual(len(records), 4)
+        self.assertEqual(
+            [r.record_type for r in records],
+            [RECORD_TYPE_TEXT, RECORD_TYPE_IMAGE, RECORD_TYPE_TEXT, RECORD_TYPE_IMAGE],
+        )
 
         self.assertGreaterEqual(records[0].timestamp_offset, 0)
         self.assertGreaterEqual(records[1].timestamp_offset, 0)
         self.assertGreaterEqual(records[2].timestamp_offset, 0)
+        self.assertGreaterEqual(records[3].timestamp_offset, 0)
 
         expected_prefix = f"data/projects/project_{project.id}/assets/session_{session.id}/"
-        self.assertTrue(image.file_path.startswith(expected_prefix))
+        self.assertTrue(image1.file_path.startswith(expected_prefix))
+        self.assertTrue(image2.file_path.startswith(expected_prefix))
 
-        image_abs_path = self.tmp_root / Path(image.file_path)
-        self.assertTrue(image_abs_path.exists())
+        self.assertTrue(image1.file_path.endswith(f"session_{session.id}_shot_001.png"))
+        self.assertTrue(image2.file_path.endswith(f"session_{session.id}_shot_002.png"))
+
+        image1_abs_path = self.tmp_root / Path(image1.file_path)
+        image2_abs_path = self.tmp_root / Path(image2.file_path)
+        self.assertTrue(image1_abs_path.exists())
+        self.assertTrue(image2_abs_path.exists())
 
     def test_finished_session_cannot_continue_recording(self) -> None:
         project = self.project_service.create_project(name="Phase2-Finish")

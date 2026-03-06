@@ -32,6 +32,13 @@ class SessionRepository(BaseRepository):
             ).fetchone()
             return self._to_model(row) if row else None
 
+    def get_paused_session(self) -> Optional[Session]:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE status = 'paused' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            return self._to_model(row) if row else None
+
     def list_by_project(self, project_id: int) -> list[Session]:
         with self.get_connection() as conn:
             rows = conn.execute(

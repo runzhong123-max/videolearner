@@ -1,4 +1,5 @@
 ﻿import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,11 +11,17 @@ from app.repositories.session_repository import SessionRepository
 from app.services.capture_service import CaptureService
 from app.services.errors import ServiceError
 from app.services.session_service import SESSION_IN_PROGRESS
-from app.utils.path_utils import build_session_asset_dir
+from app.utils.path_utils import build_session_asset_dir, resolve_record_file_path
 
 RECORD_TYPE_IMAGE = "image"
 RECORD_TYPE_TEXT = "text"
 SUPPORTED_RECORD_TYPES = {RECORD_TYPE_IMAGE, RECORD_TYPE_TEXT}
+
+
+@dataclass
+class RecordDeleteResult:
+    record_id: int
+    warnings: list[str] = field(default_factory=list)
 
 
 class RecordService:
@@ -68,13 +75,7 @@ class RecordService:
         now = datetime.now(UTC)
         offset = self._timestamp_offset_seconds(session, now)
 
-        asset_dir = build_session_asset_dir(
-            project_id=project_id,
-            session_id=session_id,
-            projects_root=self.projects_root,
-        )
-        file_name = f"capture_{now.strftime('%Y%m%d_%H%M%S_%f')}.png"
-        output_path = asset_dir / file_name
+        output_path = self._build_next_shot_path(project_id=project_id, session_id=session_id)
 
         try:
             self.capture_service.capture_screen(output_path)
@@ -105,6 +106,45 @@ class RecordService:
             raise ServiceError(f"截图记录写入数据库失败：{exc}") from exc
 
         return self._read_created_record(record_id)
+
+    def _build_next_shot_path(self, project_id: int, session_id: int) -> Path:
+        asset_dir = build_session_asset_dir(
+            project_id=project_id,
+            session_id=session_id,
+            projects_root=self.projects_root,
+        )
+        records = self.record_repository.list_by_session(session_id)
+        shot_no = sum(1 for item in records if item.record_type == RECORD_TYPE_IMAGE) + 1
+        output_path = asset_dir / f"session_{session_id}_shot_{shot_no:03d}.png"
+
+        while output_path.exists():
+            shot_no += 1
+            output_path = asset_dir / f"session_{session_id}_shot_{shot_no:03d}.png"
+
+        return output_path
+
+    def delete_record(self, record_id: int) -> RecordDeleteResult:
+        record = self.record_repository.get_by_id(record_id)
+        if record is None:
+            raise ServiceError("Record 不存在，无法删除。")
+
+        warnings: list[str] = []
+        if record.record_type == RECORD_TYPE_IMAGE and record.file_path:
+            file_path = resolve_record_file_path(record.file_path, app_root=self.app_root)
+            if file_path is not None:
+                try:
+                    if file_path.exists():
+                        file_path.unlink()
+                    else:
+                        warnings.append(f"图片文件不存在：{file_path}")
+                except Exception as exc:
+                    warnings.append(f"删除图片文件失败：{file_path} ({exc})")
+
+        deleted = self.record_repository.delete(record_id)
+        if not deleted:
+            raise ServiceError("删除 Record 失败，请重试。")
+
+        return RecordDeleteResult(record_id=record_id, warnings=warnings)
 
     def _ensure_writable_session(self, session_id: int, project_id: int | None = None) -> Session:
         session = self.session_repository.get_by_id(session_id)

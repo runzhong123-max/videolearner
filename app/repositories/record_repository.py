@@ -60,6 +60,14 @@ class RecordRepository(BaseRepository):
             ).fetchall()
             return [self._to_model(r) for r in rows]
 
+    def has_inspiration_records(self, session_id: int) -> bool:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM records WHERE session_id = ? AND is_inspiration = 1 LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            return row is not None
+
     def update(self, record_id: int, **fields: Any) -> bool:
         if not fields:
             return False

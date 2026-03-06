@@ -2,35 +2,38 @@
 
 Windows 桌面学习工作台（Python + PySide6 + SQLite）。
 
-目标：在看视频学习时低打扰记录截图与灵感文本，并逐步沉淀为结构化学习资产。
-
 ## 当前进度
 - Phase 0：项目骨架、数据库骨架、主窗口导航壳子、Repository CRUD 骨架
-- Phase 0.5：SQLite 连接生命周期修复、smoke test 全绿
+- Phase 0.5：数据库连接生命周期修复、smoke test 全绿
 - Phase 1：项目管理 + 学习会话状态机
-- Phase 2：Record 记录系统（按钮触发版：截图记录 + 灵感文本记录 + 时间线）
+- Phase 2：Record 按钮触发版（截图记录、灵感记录、时间线展示）
+- Phase 3：Prompt 管理与输出配置（不接入真实 AI）
+- Phase 3.5：历史浏览与数据管理增强（Session/Record 删除、北京时间显示）
 
-## 已实现功能（截至 Phase 2）
-- Project 管理：创建、编辑、删除、选择当前项目
-- Session 管理：开始学习 / 结束学习
-- Session 状态机：`not_started -> in_progress -> finished`
-- 全局约束：同一时刻仅允许一个 `in_progress` Session
-- Record 记录（按钮触发版）：
-  - 记录截图（落盘 + 数据库存路径）
-  - 记录灵感文本
-  - StudyPage 时间线按时间顺序展示
+## Phase 3.5 已实现
+- StudyPage 支持自由选择并查看当前项目任意历史 Session
+- 支持删除 finished Session（禁止删除 in_progress）
+- 删除 Session 时清理：
+  - 数据库中的 Session 本身
+  - 关联 Record / Note（通过外键级联）
+  - 会话资源目录与图片文件（缺失文件只告警，不阻塞删除）
+- 支持删除单条 Record：
+  - text：删除数据库记录
+  - image：先尝试删除文件，再删除数据库记录
+- UI 时间显示统一为北京时间中文格式：
+  - Session：`YYYY年M月D日 HH:MM`
+  - Record 时间线：`HH:MM:SS`
 
-## 暂未实现（本阶段明确不做）
+## 本阶段明确不包含
+- AI 请求
 - 全局快捷键
-- Prompt 管理接入
-- AI 自动总结
 - OCR / 视觉模型
 
 ## 技术栈
 - Python 3.12
 - PySide6
-- SQLite（`sqlite3`）
-- Pillow（截图）
+- SQLite（标准库 sqlite3）
+- Pillow（截图，仅 Phase 2 使用）
 
 ## 快速开始
 ```powershell
@@ -41,29 +44,22 @@ python -m app.db.init_db
 python -m app.main
 ```
 
-## 测试
+## 自动化测试
 ```powershell
 python tests/smoke_test.py
 python tests/phase1_flow_test.py
 python tests/phase2_record_test.py
+python tests/phase3_prompt_output_test.py
+python tests/phase35_history_management_test.py
 python -W error::ResourceWarning tests/smoke_test.py
 ```
 
-## 手工验证（Phase 2）
-1. 在 `Project` 页面创建项目并设为当前项目
-2. 在 `Study` 页面点击“开始学习”
-3. 点击“记录灵感”输入文本
-4. 点击“记录截图”
-5. 确认时间线出现 text/image 记录
-6. 点击“结束学习”
-7. 再次记录应被拦截并提示
-8. 重启后确认 Project / Session / Record 仍可读取
+## 存储策略
+- SQLite：Project / Session / Record / Note / PromptTemplate / OutputProfile
+- 文件系统：截图文件与导出文件
 
-## 数据存储策略
-- SQLite：结构化数据（Project / Session / Record / Note / PromptTemplate）
-- 文件系统：图片与导出文件
-- 截图路径约定：
-  - `data/projects/project_{project_id}/assets/session_{session_id}/`
+截图路径约定：
+- `data/projects/project_{project_id}/assets/session_{session_id}/`
 
 ## 目录结构
 ```text
@@ -79,9 +75,3 @@ assets/
 exports/
 docs/
 ```
-
-## 下一步方向（未实现）
-- 全局快捷键触发记录
-- Prompt 模板分层管理
-- Session 结束后 AI 结构化输出
-- 导出与回顾增强

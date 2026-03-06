@@ -1,5 +1,6 @@
 ﻿from app.db.database import Database
 from app.repositories.note_repository import NoteRepository
+from app.repositories.output_profile_repository import OutputProfileRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.record_repository import RecordRepository
@@ -14,3 +15,4 @@ class RepositoryFactory:
         self.records = RecordRepository(db_path)
         self.notes = NoteRepository(db_path)
         self.prompts = PromptTemplateRepository(db_path)
+        self.output_profiles = OutputProfileRepository(db_path)
