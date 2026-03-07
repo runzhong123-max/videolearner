@@ -71,6 +71,20 @@ class RecordService:
         return self._read_created_record(record_id)
 
     def create_image_record(self, session_id: int, project_id: int) -> Record:
+        return self.create_image_record_with_options(
+            session_id=session_id,
+            project_id=project_id,
+            is_inspiration=False,
+            linked_text_record_id=None,
+        )
+
+    def create_image_record_with_options(
+        self,
+        session_id: int,
+        project_id: int,
+        is_inspiration: bool = False,
+        linked_text_record_id: int | None = None,
+    ) -> Record:
         session = self._ensure_writable_session(session_id, project_id=project_id)
         now = datetime.now(UTC)
         offset = self._timestamp_offset_seconds(session, now)
@@ -86,6 +100,8 @@ class RecordService:
             {
                 "record_type": RECORD_TYPE_IMAGE,
                 "timestamp_offset": offset,
+                "is_inspiration": bool(is_inspiration),
+                "linked_text_record_id": linked_text_record_id,
             },
             ensure_ascii=False,
         )
@@ -98,7 +114,7 @@ class RecordService:
                 file_path=db_file_path,
                 timestamp_offset=offset,
                 metadata_json=metadata_json,
-                is_inspiration=False,
+                is_inspiration=bool(is_inspiration),
             )
         except Exception as exc:
             if output_path.exists():
@@ -106,6 +122,67 @@ class RecordService:
             raise ServiceError(f"截图记录写入数据库失败：{exc}") from exc
 
         return self._read_created_record(record_id)
+
+    def update_insight_text_record(self, record_id: int, text_content: str) -> Record:
+        content = text_content.strip()
+        if not content:
+            raise ServiceError("灵感内容不能为空。")
+
+        existing = self.record_repository.get_by_id(record_id)
+        if existing is None:
+            raise ServiceError("Record 不存在，无法编辑。")
+        if existing.record_type != RECORD_TYPE_TEXT:
+            raise ServiceError("仅 text 类型记录支持编辑灵感文本。")
+        if not existing.is_inspiration:
+            raise ServiceError("仅 insight 记录支持编辑。")
+
+        metadata = self._load_metadata(existing.metadata_json)
+        metadata["text_content"] = content
+
+        updated = self.record_repository.update(
+            record_id,
+            content=content,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        )
+        if not updated:
+            raise ServiceError("更新灵感记录失败，请重试。")
+
+        refreshed = self.record_repository.get_by_id(record_id)
+        if refreshed is None:
+            raise ServiceError("更新后读取记录失败。")
+        return refreshed
+
+    def link_image_to_text_record(self, image_record_id: int, text_record_id: int) -> Record:
+        image_record = self.record_repository.get_by_id(image_record_id)
+        if image_record is None:
+            raise ServiceError("图片记录不存在，无法关联灵感。")
+        if image_record.record_type != RECORD_TYPE_IMAGE:
+            raise ServiceError("仅 image 记录支持关联灵感文本。")
+
+        text_record = self.record_repository.get_by_id(text_record_id)
+        if text_record is None:
+            raise ServiceError("灵感文本记录不存在，无法关联图片。")
+        if text_record.record_type != RECORD_TYPE_TEXT:
+            raise ServiceError("仅 text 记录可作为灵感文本关联。")
+        if image_record.session_id != text_record.session_id:
+            raise ServiceError("图片与灵感文本不属于同一 Session，无法关联。")
+
+        metadata = self._load_metadata(image_record.metadata_json)
+        metadata["linked_text_record_id"] = text_record_id
+        metadata["is_inspiration"] = True
+
+        updated = self.record_repository.update(
+            image_record_id,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+            is_inspiration=True,
+        )
+        if not updated:
+            raise ServiceError("更新图片关联信息失败，请重试。")
+
+        refreshed = self.record_repository.get_by_id(image_record_id)
+        if refreshed is None:
+            raise ServiceError("更新后读取图片记录失败。")
+        return refreshed
 
     def _build_next_shot_path(self, project_id: int, session_id: int) -> Path:
         asset_dir = build_session_asset_dir(
@@ -173,3 +250,15 @@ class RecordService:
         if record.record_type not in SUPPORTED_RECORD_TYPES:
             raise ServiceError(f"不支持的记录类型：{record.record_type}")
         return record
+
+    @staticmethod
+    def _load_metadata(metadata_json: str) -> dict:
+        raw = (metadata_json or "").strip()
+        if not raw:
+            return {}
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+

@@ -4,16 +4,13 @@ from typing import Optional
 
 
 @dataclass
-class Note:
+class RecordConversation:
     id: Optional[int]
-    project_id: Optional[int]
+    record_id: int
     session_id: int
-    note_type: str
+    project_id: int
     title: str
-    content: str
-    summary: str
-    suggestions: str
-    inspiration_refinement: str
-    guidance: str
+    provider: str
+    model_name: str
     created_at: datetime
     updated_at: datetime

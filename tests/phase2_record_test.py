@@ -1,4 +1,5 @@
-﻿import sys
+﻿import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -108,6 +109,41 @@ class Phase2RecordTest(unittest.TestCase):
 
         with self.assertRaises(ServiceError):
             self.record_service.create_image_record(session.id, project.id)
+
+    def test_insight_can_attach_image_with_link_metadata(self) -> None:
+        project = self.project_service.create_project(name="Phase2-Insight-Image")
+        session = self.session_service.start_session(project.id)
+
+        insight_text = self.record_service.create_text_record(session.id, "insight text")
+        insight_image = self.record_service.create_image_record_with_options(
+            session_id=session.id,
+            project_id=project.id,
+            is_inspiration=True,
+            linked_text_record_id=insight_text.id,
+        )
+
+        self.assertEqual(insight_image.record_type, RECORD_TYPE_IMAGE)
+        self.assertTrue(insight_image.is_inspiration)
+
+        metadata = json.loads(insight_image.metadata_json)
+        self.assertEqual(metadata.get("linked_text_record_id"), insight_text.id)
+        self.assertTrue(metadata.get("is_inspiration"))
+
+        image_abs_path = self.tmp_root / Path(insight_image.file_path)
+        self.assertTrue(image_abs_path.exists())
+
+    def test_finished_session_insight_text_can_still_be_edited(self) -> None:
+        project = self.project_service.create_project(name="Phase2-Insight-Edit")
+        session = self.session_service.start_session(project.id)
+
+        insight = self.record_service.create_text_record(session.id, "before finish")
+        self.session_service.finish_session(session.id)
+
+        updated = self.record_service.update_insight_text_record(insight.id, "after finish edited")
+        self.assertEqual(updated.content, "after finish edited")
+
+        metadata = json.loads(updated.metadata_json)
+        self.assertEqual(metadata.get("text_content"), "after finish edited")
 
 
 if __name__ == "__main__":

@@ -134,6 +134,84 @@ MIGRATIONS: list[tuple[int, Iterable[str]]] = [
             "CREATE INDEX IF NOT EXISTS idx_output_profile_session_id ON output_profiles(session_id);",
         ],
     ),
+    (
+        7,
+        [
+            "ALTER TABLE notes ADD COLUMN project_id INTEGER;",
+            "UPDATE notes SET project_id = (SELECT sessions.project_id FROM sessions WHERE sessions.id = notes.session_id) WHERE project_id IS NULL;",
+            "ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'session_summary';",
+            "ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN content TEXT NOT NULL DEFAULT '';",
+            "CREATE INDEX IF NOT EXISTS idx_notes_project_id ON notes(project_id);",
+            "CREATE INDEX IF NOT EXISTS idx_notes_type ON notes(note_type);",
+        ],
+    ),
+    (
+        8,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS record_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id INTEGER NOT NULL,
+                session_id INTEGER NOT NULL,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT '',
+                model_name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (record_id) REFERENCES records(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS record_chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                response_id TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                image_path TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (conversation_id) REFERENCES record_conversations(id) ON DELETE CASCADE
+            );
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_record_conversations_record_id ON record_conversations(record_id);",
+            "CREATE INDEX IF NOT EXISTS idx_record_conversations_session_id ON record_conversations(session_id);",
+            "CREATE INDEX IF NOT EXISTS idx_record_chat_messages_conversation_id ON record_chat_messages(conversation_id);",
+        ],
+    ),
+    (
+        9,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ai_provider_configs (
+                provider TEXT PRIMARY KEY,
+                api_key TEXT NOT NULL DEFAULT '',
+                api_url TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                updated_at TEXT NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ai_feature_routes (
+                feature_name TEXT PRIMARY KEY,
+                provider TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+            """,
+        ],
+    ),
 ]
 
 
@@ -161,3 +239,4 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(statement)
 
         conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+
