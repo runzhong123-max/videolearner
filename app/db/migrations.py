@@ -212,6 +212,28 @@ MIGRATIONS: list[tuple[int, Iterable[str]]] = [
             """,
         ],
     ),
+    (
+        10,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS record_ocr_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id INTEGER NOT NULL UNIQUE,
+                ocr_text TEXT NOT NULL DEFAULT '',
+                ocr_status TEXT NOT NULL DEFAULT 'not_processed',
+                ocr_error TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT 'mock_ocr',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                processed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (record_id) REFERENCES records(id) ON DELETE CASCADE
+            );
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_record_ocr_results_record_id ON record_ocr_results(record_id);",
+            "CREATE INDEX IF NOT EXISTS idx_record_ocr_results_status ON record_ocr_results(ocr_status);",
+        ],
+    ),
 ]
 
 
@@ -239,4 +261,3 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(statement)
 
         conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
-

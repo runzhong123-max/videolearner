@@ -7,6 +7,7 @@ from app.models.session import Session
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.record_chat_message_repository import RecordChatMessageRepository
 from app.repositories.record_conversation_repository import RecordConversationRepository
+from app.repositories.record_ocr_repository import RecordOCRRepository
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.errors import ServiceError
@@ -14,6 +15,7 @@ from app.services.prompt_service import PromptService
 
 MAX_RECORD_CHARS = 400
 MAX_MESSAGE_CHARS = 500
+MAX_OCR_CHARS = 800
 
 
 @dataclass
@@ -35,6 +37,7 @@ class RecordChatContextBuilder:
         conversation_repository: RecordConversationRepository,
         message_repository: RecordChatMessageRepository,
         prompt_service: PromptService,
+        record_ocr_repository: RecordOCRRepository | None = None,
     ):
         self.project_repository = project_repository
         self.session_repository = session_repository
@@ -42,6 +45,7 @@ class RecordChatContextBuilder:
         self.conversation_repository = conversation_repository
         self.message_repository = message_repository
         self.prompt_service = prompt_service
+        self.record_ocr_repository = record_ocr_repository
 
     def build_for_record(
         self,
@@ -74,6 +78,7 @@ class RecordChatContextBuilder:
 
         recent_messages = self._load_recent_messages(resolved_conversation_id, history_limit)
         neighbor_records = self._load_neighbor_records(record)
+        ocr_snapshot = self._load_ocr_snapshot(record.id)
 
         context_text = (
             "[当前记录]\n"
@@ -82,7 +87,9 @@ class RecordChatContextBuilder:
             f"created_at={record.created_at.isoformat()}\n"
             f"timestamp_offset={record.timestamp_offset}s\n"
             f"is_inspiration={record.is_inspiration}\n"
-            f"record_content={self._record_payload(record)}\n\n"
+            f"record_content={self._record_payload(record, ocr_snapshot)}\n\n"
+            "[图像增强信息]\n"
+            f"{self._format_image_context(record, ocr_snapshot)}\n\n"
             "[所属 Session]\n"
             f"session_id={session.id}\n"
             f"title={session.title}\n"
@@ -138,11 +145,54 @@ class RecordChatContextBuilder:
         end = min(len(records), target_index + radius + 1)
         return [item for item in records[start:end] if item.id != current_record.id]
 
-    @staticmethod
-    def _record_payload(record: Record) -> str:
+    def _load_ocr_snapshot(self, record_id: int) -> dict[str, str]:
+        if self.record_ocr_repository is None:
+            return {
+                "status": "not_enabled",
+                "text": "",
+                "error": "",
+                "processed_at": "",
+            }
+
+        result = self.record_ocr_repository.get_by_record(record_id)
+        if result is None:
+            return {
+                "status": "not_processed",
+                "text": "",
+                "error": "",
+                "processed_at": "",
+            }
+
+        return {
+            "status": result.ocr_status,
+            "text": self._trim(result.ocr_text, MAX_OCR_CHARS),
+            "error": result.ocr_error,
+            "processed_at": result.processed_at.isoformat() if result.processed_at else "",
+        }
+
+    def _record_payload(self, record: Record, ocr_snapshot: dict[str, str]) -> str:
         if record.record_type == "image":
+            ocr_text = ocr_snapshot.get("text", "")
+            if ocr_text:
+                return (
+                    f"image_path={record.file_path}; "
+                    f"ocr_text={self._trim(ocr_text, MAX_RECORD_CHARS)}"
+                )
             return record.file_path or "(image without path)"
-        return RecordChatContextBuilder._trim(record.content, MAX_RECORD_CHARS)
+        return self._trim(record.content, MAX_RECORD_CHARS)
+
+    @staticmethod
+    def _format_image_context(record: Record, ocr_snapshot: dict[str, str]) -> str:
+        if record.record_type != "image":
+            return "（非 image 记录）"
+
+        return (
+            f"image_path={record.file_path or '-'}\n"
+            f"ocr_status={ocr_snapshot.get('status', '-') }\n"
+            f"ocr_processed_at={ocr_snapshot.get('processed_at', '-') }\n"
+            f"ocr_error={ocr_snapshot.get('error', '-') }\n"
+            f"ocr_text={ocr_snapshot.get('text', '')}"
+        )
 
     @staticmethod
     def _format_neighbor_records(records: list[Record]) -> str:
@@ -151,7 +201,8 @@ class RecordChatContextBuilder:
 
         lines: list[str] = []
         for item in records:
-            payload = RecordChatContextBuilder._record_payload(item)
+            payload = item.file_path if item.record_type == "image" else item.content
+            payload = RecordChatContextBuilder._trim(payload, MAX_RECORD_CHARS)
             lines.append(
                 f"- record_id={item.id}, type={item.record_type}, offset={item.timestamp_offset}s, content={payload}"
             )

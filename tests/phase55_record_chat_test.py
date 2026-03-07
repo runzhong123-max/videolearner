@@ -21,7 +21,7 @@ from app.services.ai_service import AIService
 from app.services.project_service import ProjectService
 from app.services.prompt_service import PromptService
 from app.services.record_chat_context_builder import RecordChatContextBuilder
-from app.services.record_chat_service import IMAGE_CHAT_STUB_REPLY, RecordChatService
+from app.services.record_chat_service import RecordChatService
 from app.services.record_service import RecordService
 
 
@@ -189,7 +189,7 @@ class Phase55RecordChatTest(unittest.TestCase):
         self.assertTrue(result.assistant_message.content)
         self.assertEqual(result.conversation.provider, "mock")
 
-    def test_image_record_returns_stub_reply_without_crash(self) -> None:
+    def test_image_record_chat_works_in_minimum_multimodal_path(self) -> None:
         project = self.project_service.create_project(name="P55-Image")
         session_id = self.session_repo.create(project.id, title="image", status="finished")
         record_id = self.record_repo.create(
@@ -201,9 +201,10 @@ class Phase55RecordChatTest(unittest.TestCase):
         service = self._build_chat_service()
         result = service.send_user_message(record_id, "这张图是什么意思")
 
-        self.assertTrue(result.is_stub)
-        self.assertIn("后续阶段支持", result.assistant_message.content)
-        self.assertEqual(result.assistant_message.content, IMAGE_CHAT_STUB_REPLY)
+        self.assertFalse(result.is_stub)
+        self.assertIn("模拟回答", result.assistant_message.content)
+        self.assertEqual(result.assistant_message.role, "assistant")
+        self.assertEqual(result.user_message.image_path, "data/projects/p/assets/s.png")
 
     def test_delete_record_cascades_conversation_and_messages(self) -> None:
         _project_id, _session_id, record_id = self._create_text_record()

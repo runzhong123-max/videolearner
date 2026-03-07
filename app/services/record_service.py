@@ -8,7 +8,11 @@ from app.models.record import Record
 from app.models.session import Session
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
-from app.services.capture_service import CaptureService
+from app.services.capture_service import (
+    CAPTURE_MODE_ACTIVE_WINDOW,
+    CAPTURE_MODE_FULL_SCREEN,
+    CaptureService,
+)
 from app.services.errors import ServiceError
 from app.services.session_service import SESSION_IN_PROGRESS
 from app.utils.path_utils import build_session_asset_dir, resolve_record_file_path
@@ -70,12 +74,18 @@ class RecordService:
         )
         return self._read_created_record(record_id)
 
-    def create_image_record(self, session_id: int, project_id: int) -> Record:
+    def create_image_record(
+        self,
+        session_id: int,
+        project_id: int,
+        capture_mode: str = CAPTURE_MODE_ACTIVE_WINDOW,
+    ) -> Record:
         return self.create_image_record_with_options(
             session_id=session_id,
             project_id=project_id,
             is_inspiration=False,
             linked_text_record_id=None,
+            capture_mode=capture_mode,
         )
 
     def create_image_record_with_options(
@@ -84,6 +94,7 @@ class RecordService:
         project_id: int,
         is_inspiration: bool = False,
         linked_text_record_id: int | None = None,
+        capture_mode: str = CAPTURE_MODE_ACTIVE_WINDOW,
     ) -> Record:
         session = self._ensure_writable_session(session_id, project_id=project_id)
         now = datetime.now(UTC)
@@ -92,7 +103,7 @@ class RecordService:
         output_path = self._build_next_shot_path(project_id=project_id, session_id=session_id)
 
         try:
-            self.capture_service.capture_screen(output_path)
+            capture_meta = self._capture_with_mode(output_path=output_path, capture_mode=capture_mode)
         except Exception as exc:
             raise ServiceError(f"截图失败：{exc}") from exc
 
@@ -102,6 +113,10 @@ class RecordService:
                 "timestamp_offset": offset,
                 "is_inspiration": bool(is_inspiration),
                 "linked_text_record_id": linked_text_record_id,
+                "capture_mode": capture_meta["requested_mode"],
+                "capture_actual_mode": capture_meta["actual_mode"],
+                "capture_fallback_reason": capture_meta["fallback_reason"],
+                "capture_region": capture_meta["region"],
             },
             ensure_ascii=False,
         )
@@ -184,6 +199,27 @@ class RecordService:
             raise ServiceError("更新后读取图片记录失败。")
         return refreshed
 
+    def _capture_with_mode(self, output_path: Path, capture_mode: str) -> dict:
+        requested_mode = (capture_mode or CAPTURE_MODE_FULL_SCREEN).strip().lower()
+
+        # Backward compatibility for fake capture services in tests.
+        if not hasattr(self.capture_service, "capture"):
+            self.capture_service.capture_screen(output_path)
+            return {
+                "requested_mode": requested_mode,
+                "actual_mode": CAPTURE_MODE_FULL_SCREEN,
+                "fallback_reason": "legacy_capture_service",
+                "region": None,
+            }
+
+        result = self.capture_service.capture(output_path=output_path, mode=requested_mode)
+        return {
+            "requested_mode": result.requested_mode,
+            "actual_mode": result.actual_mode,
+            "fallback_reason": result.fallback_reason,
+            "region": list(result.region) if result.region else None,
+        }
+
     def _build_next_shot_path(self, project_id: int, session_id: int) -> Path:
         asset_dir = build_session_asset_dir(
             project_id=project_id,
@@ -261,4 +297,3 @@ class RecordService:
         except json.JSONDecodeError:
             return {}
         return loaded if isinstance(loaded, dict) else {}
-

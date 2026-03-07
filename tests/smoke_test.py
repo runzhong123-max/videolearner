@@ -20,6 +20,7 @@ from app.repositories.project_repository import ProjectRepository
 from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.record_chat_message_repository import RecordChatMessageRepository
 from app.repositories.record_conversation_repository import RecordConversationRepository
+from app.repositories.record_ocr_repository import RecordOCRRepository
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.ai_providers.ai_result import AIGenerationResult
@@ -31,6 +32,8 @@ from app.services.output_profile_service import OutputProfileService
 from app.services.project_service import ProjectService
 from app.services.prompt_service import PromptService
 from app.services.record_service import RecordService
+from app.services.shortcut_manager import NullHotkeyBackend, ShortcutManager
+from app.services.shortcut_settings_service import ShortcutSettingsService
 from app.services.session_service import SessionService
 from app.ui.main_window import MainWindow
 
@@ -44,7 +47,7 @@ class DummyCaptureService:
 class DummyProvider:
     def generate(self, _prompt: str, _context: dict) -> AIGenerationResult:
         return AIGenerationResult(
-            content="{\"summary\": \"summary\", \"expansion\": \"extension\", \"inspirations\": \"\", \"guidance\": \"g\"}",
+            content='{"summary": "summary", "expansion": "extension", "inspirations": "", "guidance": "g"}',
             provider="dummy",
             model="dummy-model",
             raw_response=None,
@@ -65,6 +68,7 @@ class DatabaseSmokeTest(unittest.TestCase):
         self.projects = ProjectRepository(db_path_str)
         self.sessions = SessionRepository(db_path_str)
         self.records = RecordRepository(db_path_str)
+        self.record_ocr_results = RecordOCRRepository(db_path_str)
         self.record_conversations = RecordConversationRepository(db_path_str)
         self.record_chat_messages = RecordChatMessageRepository(db_path_str)
         self.notes = NoteRepository(db_path_str)
@@ -93,13 +97,14 @@ class DatabaseSmokeTest(unittest.TestCase):
             self.assertIn("output_profiles", tables)
             self.assertIn("record_conversations", tables)
             self.assertIn("record_chat_messages", tables)
+            self.assertIn("record_ocr_results", tables)
             self.assertIn("app_settings", tables)
             self.assertIn("ai_provider_configs", tables)
             self.assertIn("ai_feature_routes", tables)
             self.assertIn("schema_migrations", tables)
 
             versions = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(versions, 9)
+            self.assertEqual(versions, 10)
 
     def test_foreign_keys_enforced(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):
@@ -132,6 +137,15 @@ class DatabaseSmokeTest(unittest.TestCase):
         )
         self.assertIsNotNone(self.records.get_by_id(record_id))
         self.assertTrue(self.records.update(record_id, content="hello2", timestamp_offset=5))
+
+        self.record_ocr_results.upsert(
+            record_id=record_id,
+            ocr_text="mock ocr",
+            ocr_status="completed",
+            ocr_error="",
+            provider="mock_ocr",
+        )
+        self.assertIsNotNone(self.record_ocr_results.get_by_record(record_id))
 
         note_id = self.notes.create(
             session_id=session_id,
@@ -202,6 +216,8 @@ class UISmokeTest(unittest.TestCase):
         prompt_service = PromptService(prompts, sessions)
         output_profile_service = OutputProfileService(output_profiles, sessions, records)
         ai_settings_service = AISettingsService(app_settings, ai_provider_configs, ai_feature_routes)
+        shortcut_settings_service = ShortcutSettingsService(app_settings)
+        shortcut_manager = ShortcutManager(shortcut_settings_service, backend=NullHotkeyBackend())
         context_builder = ContextBuilder(
             project_repository=projects,
             session_repository=sessions,
@@ -226,10 +242,12 @@ class UISmokeTest(unittest.TestCase):
             output_profile_service=output_profile_service,
             note_service=note_service,
             ai_settings_service=ai_settings_service,
+            shortcut_settings_service=shortcut_settings_service,
+            shortcut_manager=shortcut_manager,
         )
 
-        self.assertEqual(window.nav.count(), 5)
-        self.assertEqual(window.stack.count(), 5)
+        self.assertEqual(window.nav.count(), 6)
+        self.assertEqual(window.stack.count(), 6)
 
         for idx in range(window.nav.count()):
             window.nav.setCurrentRow(idx)

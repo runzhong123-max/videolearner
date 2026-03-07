@@ -8,6 +8,7 @@ from app.repositories.project_repository import ProjectRepository
 from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.record_chat_message_repository import RecordChatMessageRepository
 from app.repositories.record_conversation_repository import RecordConversationRepository
+from app.repositories.record_ocr_repository import RecordOCRRepository
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
 
@@ -18,6 +19,7 @@ class RepositoryFactory:
         self.projects = ProjectRepository(db_path)
         self.sessions = SessionRepository(db_path)
         self.records = RecordRepository(db_path)
+        self.record_ocr_results = RecordOCRRepository(db_path)
         self.record_conversations = RecordConversationRepository(db_path)
         self.record_chat_messages = RecordChatMessageRepository(db_path)
         self.notes = NoteRepository(db_path)

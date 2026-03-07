@@ -15,7 +15,7 @@ RECORD_CHAT_ROLE_USER = "user"
 RECORD_CHAT_ROLE_ASSISTANT = "assistant"
 RECORD_CHAT_ROLE_SYSTEM = "system"
 
-IMAGE_CHAT_STUB_REPLY = "图片智能问答将在后续阶段支持。当前仅保存文本对话占位回复。"
+IMAGE_CHAT_STUB_REPLY = "图片智能问答暂不可用，本次返回占位回复。"
 
 
 @dataclass
@@ -88,30 +88,8 @@ class RecordChatService:
             conversation_id=conversation.id,
             role=RECORD_CHAT_ROLE_USER,
             content=content,
+            image_path=record.file_path if record.record_type == "image" else "",
         )
-
-        if record.record_type == "image":
-            assistant_message = self._create_message(
-                conversation_id=conversation.id,
-                role=RECORD_CHAT_ROLE_ASSISTANT,
-                content=IMAGE_CHAT_STUB_REPLY,
-                metadata={"mode": "image_stub"},
-                image_path=record.file_path,
-            )
-            self.conversation_repository.update(
-                conversation.id,
-                provider="stub",
-                model_name="image-placeholder",
-            )
-            refreshed = self.conversation_repository.get_by_id(conversation.id)
-            if refreshed is None:
-                raise ServiceError("图片对话保存后读取失败。")
-            return RecordChatSendResult(
-                conversation=refreshed,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                is_stub=True,
-            )
 
         context = self.context_builder.build_for_record(
             record_id=record_id,
@@ -129,24 +107,36 @@ class RecordChatService:
         )
 
         reply_text = (result.content or "").strip()
+        is_stub = False
+        provider = result.provider
+        model = result.model
+
         if not reply_text:
-            raise ServiceError("AI 未返回有效回复内容。")
+            if record.record_type == "image":
+                reply_text = IMAGE_CHAT_STUB_REPLY
+                is_stub = True
+                provider = "stub"
+                model = "image-placeholder"
+            else:
+                raise ServiceError("AI 未返回有效回复内容。")
 
         assistant_message = self._create_message(
             conversation_id=conversation.id,
             role=RECORD_CHAT_ROLE_ASSISTANT,
             content=reply_text,
             metadata={
-                "provider": result.provider,
-                "model": result.model,
+                "provider": provider,
+                "model": model,
                 "usage": result.usage,
                 "metadata": result.metadata,
+                "record_type": record.record_type,
             },
+            image_path=record.file_path if record.record_type == "image" else "",
         )
         self.conversation_repository.update(
             conversation.id,
-            provider=result.provider,
-            model_name=result.model or "",
+            provider=provider,
+            model_name=model or "",
         )
 
         refreshed = self.conversation_repository.get_by_id(conversation.id)
@@ -157,7 +147,7 @@ class RecordChatService:
             conversation=refreshed,
             user_message=user_message,
             assistant_message=assistant_message,
-            is_stub=False,
+            is_stub=is_stub,
         )
 
     def _create_message(

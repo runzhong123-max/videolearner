@@ -12,23 +12,37 @@ Windows 桌面学习工作台（Python + PySide6 + SQLite）。
 - Phase 4：AI 生成笔记闭环（基于当前选中 Session）
 - Phase 4.5：AI Provider 抽象层 + 输出 contract 稳定化
 - Phase 5：Session / Record / Note 浏览与阅读体验升级
-- Phase 5.5：Record 智能对话（text/insight 优先，image 预留 stub）
+- Phase 5.5：Record 智能对话（text/insight 优先）
 - Phase 6：AI Provider 设置中心 + 生成体验增强（基础版）
+- Phase 7：快捷键与高效工作流增强（基础版）
+- Phase 8：OCR / image 多模态问答（最小闭环）/ 活动窗口优先截图（含 fallback）
 
-## Phase 5 ~ 6 已实现
+## Phase 5 ~ 8 已实现
 - StudyPage 升级为 Session 浏览区 / Record 时间线区 / 详情预览区
 - Session 列表显示：标题、状态、开始时间、Record 数量、是否有 Note
 - Record 时间线支持 image 缩略图、text/insight 摘要、北京时间与相对时间
 - 详情区支持图片大图预览、文本全文预览、Session Note 概览
 - Record 详情区接入 Record 级 AI 对话：开始/继续对话、历史消息展示、输入框发送
 - 对话按 `record_id` 持久化到数据库，可再次打开同一 Record 继续追问
-- image Record 本阶段提供明确占位回复（stub），为后续多模态问答预留接口
+- image Record 支持最小可用问答链路（优先 OCR 文本 + 图片元信息 + 历史对话）
+- image Record 详情区支持 OCR 状态与 OCR 文本展示，可手动触发 OCR
+- CaptureService 支持 `full_screen` / `active_window` / `region(future)` 模式接口
+- `active_window` 不可用时自动回退 `full_screen`，并写入 capture metadata
 - NotePage 升级为分块阅读（Summary / Inspirations / Expansion / Guidance + 可选模块）
 - 新增 AI Settings 页面：可设置默认 Provider、功能路由、Provider 参数（api_key/base_url/model/timeout）
 - 新增最小功能路由：`session_note_provider`、`record_chat_provider`，未配置时回退 `default_provider`
 - 新增 Provider 连接测试：mock 离线直通；真实 Provider 走最小请求并返回可读结果
-- 配置持久化到 SQLite（`app_settings` / `ai_provider_configs` / `ai_feature_routes`），重启后可读取
-- Note 生成与 Record Chat 成功提示中展示 provider/model
+- 新增全局快捷键管理（Windows 优先）和 Shortcuts 配置页面
+
+## 快捷键默认值（Phase 7）
+- 开始学习：`ctrl+alt+s`
+- 暂停学习：`ctrl+alt+p`
+- 继续学习：`ctrl+alt+r`
+- 结束学习：`ctrl+alt+e`
+- 记录截图：`ctrl+alt+c`
+- 记录灵感：`ctrl+shift+a`
+
+说明：`Tab` 在全局热键场景与系统/输入焦点冲突高，默认未采用；可在 Shortcuts 页面手动改为 `tab`。
 
 ## AI Provider
 可选 Provider：
@@ -82,18 +96,19 @@ Provider 层统一返回 `AIGenerationResult`：
 - `AIContractError`：输出不满足 sections contract
 
 ## 技术栈
-- Python 3.12+
+- Python 3.12+（已在 3.14 环境验证可运行）
 - PySide6
 - SQLite（标准库 sqlite3）
 - Pillow（截图）
 - requests（模型调用）
+- keyboard（Windows 全局快捷键）
 
 ## 快速开始
 ```powershell
 py -3 -m venv .venv
 .venv\Scripts\activate
-python -m pip install -r requirements.txt
-python -m app.db.init_db
+py -m pip install -r requirements.txt
+py -m app.db.init_db
 
 # 按需配置 AI Provider（开发推荐 mock）
 $env:AI_PROVIDER="mock"
@@ -104,31 +119,35 @@ $env:AI_PROVIDER="mock"
 # $env:AI_PROVIDER="glm"
 # $env:GLM_API_KEY="your-glm-key"
 
-python -m app.main
+py -m app.main
 ```
-
 
 ## 自动化测试
 ```powershell
-python -m unittest tests.smoke_test -v
-python -m unittest tests.phase1_flow_test -v
-python -m unittest tests.phase2_record_test -v
-python -m unittest tests.phase3_prompt_output_test -v
-python -m unittest tests.phase35_history_management_test -v
-python -m unittest tests.phase4_ai_note_generation_test -v
-python -m unittest tests.phase45_ai_contract_test -v
-python -m unittest tests.phase5_workspace_view_test -v
-python -m unittest tests.phase55_record_chat_test -v
-python -m unittest tests.phase6_ai_settings_test -v
-python -W error::ResourceWarning -m unittest tests.smoke_test -v
+py -m unittest tests.smoke_test -v
+py -m unittest tests.phase1_flow_test -v
+py -m unittest tests.phase2_record_test -v
+py -m unittest tests.phase3_prompt_output_test -v
+py -m unittest tests.phase35_history_management_test -v
+py -m unittest tests.phase4_ai_note_generation_test -v
+py -m unittest tests.phase45_ai_contract_test -v
+py -m unittest tests.phase5_workspace_view_test -v
+py -m unittest tests.phase55_record_chat_test -v
+py -m unittest tests.phase6_ai_settings_test -v
+py -m unittest tests.phase7_shortcut_workflow_test -v
+py -m unittest tests.phase8_ocr_image_multimodal_test -v
+py -W error::ResourceWarning -m unittest tests.smoke_test -v
 ```
 
 ## 存储策略
-- SQLite：Project / Session / Record / Note / PromptTemplate / OutputProfile / app_settings / ai_provider_configs / ai_feature_routes
+- SQLite：Project / Session / Record / Note / PromptTemplate / OutputProfile / app_settings / ai_provider_configs / ai_feature_routes / record_ocr_results
 - 文件系统：截图文件与导出文件
 
 截图路径约定：
 - `data/projects/project_{project_id}/assets/session_{session_id}/session_{session_id}_shot_XXX.png`
+
+OCR 结果：
+- `record_ocr_results` 以 `record_id` 关联 image Record，持久化 `ocr_text / ocr_status / ocr_error / processed_at`
 
 ## 目录结构
 ```text
@@ -145,4 +164,3 @@ assets/
 exports/
 docs/
 ```
-

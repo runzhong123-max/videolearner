@@ -1,5 +1,7 @@
-﻿from PySide6.QtWidgets import (
+﻿from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -11,16 +13,20 @@ from app.models.project import Project
 from app.models.session import Session
 from app.services.ai_settings_service import AISettingsService
 from app.services.note_service import NoteService
+from app.services.ocr_service import OCRService
 from app.services.output_profile_service import OutputProfileService
 from app.services.project_service import ProjectService
 from app.services.prompt_service import PromptService
 from app.services.record_chat_service import RecordChatService
 from app.services.record_service import RecordService
+from app.services.shortcut_manager import ShortcutManager
+from app.services.shortcut_settings_service import ShortcutSettingsService
 from app.services.session_service import SessionService
 from app.ui.pages.ai_settings_page import AISettingsPage
 from app.ui.pages.note_page import NotePage
 from app.ui.pages.project_page import ProjectPage
 from app.ui.pages.prompt_page import PromptPage
+from app.ui.pages.shortcut_settings_page import ShortcutSettingsPage
 from app.ui.pages.study_page import StudyPage
 
 
@@ -33,8 +39,11 @@ class MainWindow(QMainWindow):
         prompt_service: PromptService,
         output_profile_service: OutputProfileService,
         note_service: NoteService,
-        ai_settings_service: AISettingsService,
+        ai_settings_service: AISettingsService | None = None,
+        shortcut_settings_service: ShortcutSettingsService | None = None,
+        shortcut_manager: ShortcutManager | None = None,
         record_chat_service: RecordChatService | None = None,
+        ocr_service: OCRService | None = None,
     ):
         super().__init__()
         self.project_service = project_service
@@ -44,7 +53,10 @@ class MainWindow(QMainWindow):
         self.output_profile_service = output_profile_service
         self.note_service = note_service
         self.ai_settings_service = ai_settings_service
+        self.shortcut_settings_service = shortcut_settings_service
+        self.shortcut_manager = shortcut_manager
         self.record_chat_service = record_chat_service
+        self.ocr_service = ocr_service
         self.current_project: Project | None = None
         self.current_session: Session | None = None
 
@@ -60,6 +72,7 @@ class MainWindow(QMainWindow):
             self.record_service,
             self.note_service,
             self.record_chat_service,
+            ocr_service=self.ocr_service,
         )
         self.prompt_page = PromptPage(
             prompt_service=self.prompt_service,
@@ -67,7 +80,20 @@ class MainWindow(QMainWindow):
             session_service=self.session_service,
         )
         self.note_page = NotePage(note_service=self.note_service)
-        self.ai_settings_page = AISettingsPage(ai_settings_service=self.ai_settings_service)
+
+        if self.ai_settings_service is not None:
+            self.ai_settings_page: QWidget = AISettingsPage(ai_settings_service=self.ai_settings_service)
+        else:
+            self.ai_settings_page = QLabel("AI Settings Service 未启用。")
+
+        if self.shortcut_settings_service is not None and self.shortcut_manager is not None:
+            self.shortcut_settings_page: QWidget = ShortcutSettingsPage(
+                shortcut_settings_service=self.shortcut_settings_service,
+                shortcut_manager=self.shortcut_manager,
+            )
+            self.shortcut_settings_page.shortcuts_saved.connect(self._on_shortcuts_saved)
+        else:
+            self.shortcut_settings_page = QLabel("Shortcut Service 未启用。")
 
         self.project_page.project_selected.connect(self._on_project_selected)
         self.study_page.session_selected.connect(self._on_session_selected)
@@ -80,6 +106,7 @@ class MainWindow(QMainWindow):
             ("Prompt", self.prompt_page),
             ("Note", self.note_page),
             ("AI Settings", self.ai_settings_page),
+            ("Shortcuts", self.shortcut_settings_page),
         ]
 
         for title, page in self.pages:
@@ -96,6 +123,14 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(shell)
         self.statusBar().showMessage("请选择项目并开始学习。")
+
+        if self.shortcut_manager is not None:
+            self.shortcut_manager.action_triggered.connect(self._on_shortcut_action_triggered)
+            self.shortcut_manager.registration_failed.connect(self._on_shortcut_registration_failed)
+            result = self.shortcut_manager.reload_from_settings()
+            if result.failed_actions:
+                failed = ", ".join(result.failed_actions)
+                self.statusBar().showMessage(f"部分快捷键注册失败：{failed}")
 
     def _on_nav_changed(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
@@ -135,3 +170,19 @@ class MainWindow(QMainWindow):
             f"Session #{result.session_id} 笔记已生成并保存{provider_text}。"
         )
         self.note_page.refresh_view()
+
+    def _on_shortcut_action_triggered(self, action: str) -> None:
+        message = self.study_page.trigger_shortcut_action(action)
+        if message:
+            self.statusBar().showMessage(f"[快捷键] {message}")
+
+    def _on_shortcut_registration_failed(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+
+    def _on_shortcuts_saved(self, _bindings: dict) -> None:
+        self.statusBar().showMessage("快捷键配置已更新。")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.shortcut_manager is not None:
+            self.shortcut_manager.stop()
+        super().closeEvent(event)

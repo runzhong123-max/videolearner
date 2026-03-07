@@ -288,7 +288,7 @@ class Phase5WorkspaceViewTest(unittest.TestCase):
         self.assertTrue(page.edit_insight_btn.isEnabled())
 
         with patch(
-            "app.ui.pages.study_page.QInputDialog.getMultiLineText",
+            "app.ui.pages.study_page.StudyPage._prompt_topmost_multiline_text",
             return_value=("edited after finish", True),
         ):
             page._on_edit_insight()
@@ -318,7 +318,7 @@ class Phase5WorkspaceViewTest(unittest.TestCase):
             return ("ordered insight", True)
 
         with patch(
-            "app.ui.pages.study_page.QInputDialog.getMultiLineText",
+            "app.ui.pages.study_page.StudyPage._prompt_topmost_multiline_text",
             side_effect=fake_dialog,
         ):
             page._on_record_text_with_capture()

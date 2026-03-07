@@ -3,10 +3,12 @@
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -23,6 +25,12 @@ from app.models.record import Record
 from app.models.session import Session
 from app.services.errors import ServiceError
 from app.services.note_service import NoteService
+from app.services.ocr_service import (
+    OCRService,
+    OCR_STATUS_COMPLETED,
+    OCR_STATUS_FAILED,
+    OCR_STATUS_NOT_PROCESSED,
+)
 from app.services.record_chat_service import RecordChatService
 from app.services.record_service import RECORD_TYPE_IMAGE, RecordService
 from app.services.session_service import (
@@ -88,6 +96,7 @@ class StudyPage(QWidget):
         record_service: RecordService,
         note_service: NoteService | None = None,
         record_chat_service: RecordChatService | None = None,
+        ocr_service: OCRService | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -95,6 +104,7 @@ class StudyPage(QWidget):
         self.record_service = record_service
         self.note_service = note_service
         self.record_chat_service = record_chat_service
+        self.ocr_service = ocr_service
         self.current_project: Project | None = None
         self.current_session: Session | None = None
         self.selected_session_id: int | None = None
@@ -138,11 +148,23 @@ class StudyPage(QWidget):
         self.image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_preview_label.setMinimumHeight(260)
         self.image_preview_label.setStyleSheet("border: 1px solid #d0d0d0; background: #fafafa;")
+        self.ocr_status_label = QLabel("OCR 状态：未处理")
+        self.ocr_status_label.setWordWrap(True)
+        self.ocr_run_btn = QPushButton("执行 OCR")
+        self.ocr_run_btn.clicked.connect(self._on_run_ocr)
+        self.ocr_text_edit = QTextEdit()
+        self.ocr_text_edit.setReadOnly(True)
+        self.ocr_text_edit.setPlaceholderText("OCR 结果将在这里显示。")
+        self.ocr_text_edit.setMinimumHeight(120)
 
         image_page = QWidget()
         image_layout = QVBoxLayout(image_page)
         image_layout.addWidget(self.image_name_label)
         image_layout.addWidget(self.image_preview_label, 1)
+        image_layout.addWidget(self.ocr_status_label)
+        image_layout.addWidget(self.ocr_run_btn)
+        image_layout.addWidget(QLabel("OCR 文本"))
+        image_layout.addWidget(self.ocr_text_edit)
 
         self.detail_stack.addWidget(self.placeholder_label)
         self.detail_stack.addWidget(self.note_preview_edit)
@@ -523,7 +545,7 @@ class StudyPage(QWidget):
         if session is None:
             return
 
-        text, ok = QInputDialog.getMultiLineText(self, "记录灵感", "请输入灵感内容：")
+        text, ok = self._prompt_topmost_multiline_text("记录灵感", "请输入灵感内容：")
         if not ok:
             return
         if not text.strip():
@@ -558,7 +580,7 @@ class StudyPage(QWidget):
             self._set_message(str(exc), is_error=True)
             return
 
-        text, ok = QInputDialog.getMultiLineText(self, "灵感配图", "请输入灵感内容：")
+        text, ok = self._prompt_topmost_multiline_text("灵感配图", "请输入灵感内容：")
         if not ok:
             self.selected_session_id = session.id
             self.selected_record_id = image_record.id
@@ -596,8 +618,7 @@ class StudyPage(QWidget):
             self._set_message("仅支持编辑 insight 文本记录。", is_error=True)
             return
 
-        text, ok = QInputDialog.getMultiLineText(
-            self,
+        text, ok = self._prompt_topmost_multiline_text(
             "编辑灵感",
             "更新灵感内容：",
             record.content,
@@ -801,6 +822,61 @@ class StudyPage(QWidget):
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
 
+    def _on_run_ocr(self) -> None:
+        record = self._get_selected_record()
+        if record is None:
+            self._set_message("请先选择 image Record。", is_error=True)
+            return
+        if record.record_type != RECORD_TYPE_IMAGE:
+            self._set_message("仅 image Record 支持 OCR。", is_error=True)
+            return
+        if self.ocr_service is None:
+            self._set_message("当前未启用 OCR 服务。", is_error=True)
+            return
+
+        try:
+            result = self.ocr_service.run_ocr_for_record(record.id)
+            self._set_message(
+                f"OCR 完成（provider={result.provider}）。",
+                is_error=False,
+            )
+        except ServiceError as exc:
+            self._set_message(str(exc), is_error=True)
+
+        self._refresh_ocr_panel(record)
+
+    def _refresh_ocr_panel(self, record: Record) -> None:
+        if self.ocr_service is None:
+            self.ocr_status_label.setText("OCR 状态：服务未启用")
+            self.ocr_text_edit.setPlainText("")
+            self.ocr_run_btn.setEnabled(False)
+            return
+
+        result = self.ocr_service.get_or_default_result(record.id)
+        self.ocr_status_label.setText(
+            f"OCR 状态：{self._format_ocr_status_label(result.ocr_status)}"
+        )
+        if result.ocr_status == OCR_STATUS_FAILED and result.ocr_error:
+            self.ocr_text_edit.setPlainText(f"OCR 失败：{result.ocr_error}")
+        else:
+            self.ocr_text_edit.setPlainText(result.ocr_text or "")
+
+        selected = self._get_selected_record()
+        self.ocr_run_btn.setEnabled(selected is not None and selected.record_type == RECORD_TYPE_IMAGE)
+
+    def _reset_ocr_panel(self) -> None:
+        self.ocr_status_label.setText("OCR 状态：-")
+        self.ocr_text_edit.setPlainText("")
+        self.ocr_run_btn.setEnabled(False)
+
+    @staticmethod
+    def _format_ocr_status_label(status: str) -> str:
+        mapping = {
+            OCR_STATUS_NOT_PROCESSED: "未处理",
+            OCR_STATUS_COMPLETED: "已完成",
+            OCR_STATUS_FAILED: "失败",
+        }
+        return mapping.get(status, status)
     def _require_current_in_progress_session(self) -> Session | None:
         if self.current_project is None:
             self._set_message("请先选择当前项目。", is_error=True)
@@ -887,10 +963,12 @@ class StudyPage(QWidget):
                         Qt.TransformationMode.SmoothTransformation,
                     )
                     self.image_preview_label.setPixmap(scaled)
+            self._refresh_ocr_panel(record)
             self.detail_stack.setCurrentIndex(3)
             self._refresh_chat_panel(record)
             return
 
+        self._reset_ocr_panel()
         full_text = (record.content or "").strip() or record_preview_text(record, max_len=500)
         self.record_text_edit.setPlainText(full_text)
         self.detail_stack.setCurrentIndex(2)
@@ -915,6 +993,7 @@ class StudyPage(QWidget):
             f"标题：{note.title or '-'} | 更新时间：{format_cn_datetime_seconds(note.updated_at)}"
         )
         self.note_preview_edit.setPlainText(build_note_preview_text(note))
+        self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(1)
         self._reset_chat_panel("请选择 Record 后发起智能对话。")
 
@@ -922,6 +1001,7 @@ class StudyPage(QWidget):
         self.detail_title_label.setText("详情预览")
         self.detail_meta_label.setText("-")
         self.placeholder_label.setText(text)
+        self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(0)
         self._reset_chat_panel("请选择 Record 后发起智能对话。")
 
@@ -933,7 +1013,7 @@ class StudyPage(QWidget):
         messages = self.record_chat_service.list_messages_by_record(record.id)
         if not messages:
             if record.record_type == RECORD_TYPE_IMAGE:
-                self.chat_hint_label.setText("图片智能问答将在后续阶段支持；本阶段返回占位回复并保存聊天历史。")
+                self.chat_hint_label.setText("可围绕该图片记录提问，若先执行 OCR，回答通常更准确。")
             else:
                 self.chat_hint_label.setText("可围绕该文本记录提问，开始多轮对话。")
             self.chat_history_edit.setPlainText("暂无对话历史。")
@@ -1022,8 +1102,65 @@ class StudyPage(QWidget):
             and selected_record.record_type == "text"
             and selected_record.is_inspiration
         )
+        self.ocr_run_btn.setEnabled(
+            selected_record is not None
+            and selected_record.record_type == RECORD_TYPE_IMAGE
+            and self.ocr_service is not None
+        )
         self._update_chat_action_state()
 
+    def trigger_shortcut_action(self, action: str) -> str:
+        handlers = {
+            "start_session": self._on_start,
+            "pause_session": self._on_pause,
+            "resume_session": self._on_resume,
+            "finish_session": self._on_finish,
+            "capture_image_record": self._on_capture,
+            "capture_text_record": self._on_record_text,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            self._set_message(f"不支持的快捷键动作：{action}", is_error=True)
+            return self.message_label.text()
+
+        handler()
+        return self.message_label.text()
+
+    def _prompt_topmost_multiline_text(
+        self,
+        title: str,
+        label: str,
+        initial_text: str = "",
+    ) -> tuple[str, bool]:
+        # Keep dialog topmost but decouple from main window, so hotkey input does not
+        # bring the whole workspace window to front and block video playback.
+        dialog = QInputDialog(None)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput, True)
+        dialog.setTextValue(initial_text or "")
+        dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        dialog.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        dialog.resize(560, 300)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+        editor = dialog.findChild(QTextEdit)
+        if editor is not None:
+            editor.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+            if initial_text:
+                editor.selectAll()
+        else:
+            line_editor = dialog.findChild(QLineEdit)
+            if line_editor is not None:
+                line_editor.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+                if initial_text:
+                    line_editor.selectAll()
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted
     @staticmethod
     def _friendly_ai_error(error_message: str) -> str:
         text = (error_message or "").strip()
