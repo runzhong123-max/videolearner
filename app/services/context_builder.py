@@ -4,6 +4,7 @@ from app.models.project import Project
 from app.models.session import Session
 from app.repositories.note_repository import NoteRepository
 from app.repositories.project_repository import ProjectRepository
+from app.repositories.record_ocr_repository import RecordOCRRepository
 from app.repositories.record_repository import RecordRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.errors import ServiceError
@@ -13,6 +14,7 @@ from app.services.prompt_service import EffectivePrompt, PromptService
 MAX_PROJECT_SUMMARY_CHARS = 1200
 MAX_SESSION_SUMMARY_CHARS = 400
 MAX_RECORD_TEXT_CHARS = 300
+MAX_RECORD_OCR_CHARS = 500
 
 
 @dataclass
@@ -35,6 +37,7 @@ class ContextBuilder:
         note_repository: NoteRepository,
         prompt_service: PromptService,
         output_profile_service: OutputProfileService,
+        record_ocr_repository: RecordOCRRepository | None = None,
     ):
         self.project_repository = project_repository
         self.session_repository = session_repository
@@ -42,6 +45,7 @@ class ContextBuilder:
         self.note_repository = note_repository
         self.prompt_service = prompt_service
         self.output_profile_service = output_profile_service
+        self.record_ocr_repository = record_ocr_repository
 
     def build_for_session(self, session_id: int) -> ContextBundle:
         session = self.session_repository.get_by_id(session_id)
@@ -149,10 +153,14 @@ class ContextBuilder:
 
         lines: list[str] = []
         for record in records:
+            payload = ""
             if record.record_type == "text":
                 payload = self._trim(record.content, MAX_RECORD_TEXT_CHARS)
             elif record.record_type == "image":
                 payload = record.file_path
+                ocr_summary = self._build_record_ocr_summary(record.id)
+                if ocr_summary:
+                    payload = f"{payload}; {ocr_summary}"
             else:
                 payload = self._trim(record.content or record.file_path, MAX_RECORD_TEXT_CHARS)
 
@@ -160,6 +168,22 @@ class ContextBuilder:
                 f"- record_id={record.id}, type={record.record_type}, offset={record.timestamp_offset}s, created_at={record.created_at.isoformat()}, payload={payload}"
             )
         return "\n".join(lines)
+
+    def _build_record_ocr_summary(self, record_id: int) -> str:
+        if self.record_ocr_repository is None:
+            return ""
+
+        result = self.record_ocr_repository.get_by_record(record_id)
+        if result is None:
+            return ""
+        if result.ocr_status != "completed":
+            return f"ocr_status={result.ocr_status}"
+
+        text = self._trim(result.ocr_text, MAX_RECORD_OCR_CHARS)
+        if not text:
+            return "ocr_status=completed"
+
+        return f"ocr_status=completed; ocr_text={text}"
 
     @staticmethod
     def _format_output_options(output_options: dict[str, bool]) -> str:

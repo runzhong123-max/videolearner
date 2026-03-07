@@ -10,6 +10,7 @@ from app.services.capture_service import CaptureService
 from app.services.context_builder import ContextBuilder
 from app.services.note_service import NoteService
 from app.services.ocr_service import OCRService
+from app.services.ocr_settings_service import OCRSettingsService
 from app.services.output_profile_service import OutputProfileService
 from app.services.project_service import ProjectService
 from app.services.prompt_service import PromptService
@@ -36,10 +37,14 @@ def main() -> int:
     )
     capture_service = CaptureService()
     record_service = RecordService(repositories.records, repositories.sessions, capture_service)
+
+    ocr_settings_service = OCRSettingsService(repositories.app_settings)
     ocr_service = OCRService(
         record_repository=repositories.records,
         record_ocr_repository=repositories.record_ocr_results,
+        ocr_settings_service=ocr_settings_service,
     )
+
     prompt_service = PromptService(repositories.prompts, repositories.sessions)
     output_profile_service = OutputProfileService(
         repositories.output_profiles,
@@ -60,6 +65,7 @@ def main() -> int:
         project_repository=repositories.projects,
         session_repository=repositories.sessions,
         record_repository=repositories.records,
+        record_ocr_repository=repositories.record_ocr_results,
         note_repository=repositories.notes,
         prompt_service=prompt_service,
         output_profile_service=output_profile_service,
@@ -99,6 +105,7 @@ def main() -> int:
         output_profile_service=output_profile_service,
         note_service=note_service,
         ai_settings_service=ai_settings_service,
+        ocr_settings_service=ocr_settings_service,
         shortcut_settings_service=shortcut_settings_service,
         shortcut_manager=shortcut_manager,
         record_chat_service=record_chat_service,

@@ -21,9 +21,11 @@ _NOTE_SECTION_TITLES = {
     "inspirations": "Inspirations",
     "expansion": "Expansion",
     "guidance": "Guidance",
+    "review_questions": "Review Questions",
+    "key_points": "Key Points",
+    "follow_up_tasks": "Follow-up Tasks",
     "history_link": "History Link",
     "gap_analysis": "Gap Analysis",
-    "review_questions": "Review Questions",
     "homework": "Homework",
     "expression_notes": "Expression Notes",
     "evaluation": "Evaluation",
@@ -36,12 +38,17 @@ _HEADING_ALIASES = {
     "insight": "inspirations",
     "inspirations": "inspirations",
     "guidance": "guidance",
+    "review_questions": "review_questions",
+    "review questions": "review_questions",
+    "key_points": "key_points",
+    "key points": "key_points",
+    "follow_up_tasks": "follow_up_tasks",
+    "follow-up tasks": "follow_up_tasks",
+    "follow up tasks": "follow_up_tasks",
     "history_link": "history_link",
     "history link": "history_link",
     "gap_analysis": "gap_analysis",
     "gap analysis": "gap_analysis",
-    "review_questions": "review_questions",
-    "review questions": "review_questions",
     "homework": "homework",
     "expression_notes": "expression_notes",
     "expression notes": "expression_notes",
@@ -135,12 +142,18 @@ def parse_note_sections(note: Note) -> dict[str, str]:
     expansion = parsed_from_content.get("expansion") or note.suggestions
     inspirations = parsed_from_content.get("inspirations") or note.inspiration_refinement
     guidance = parsed_from_content.get("guidance") or note.guidance
+    review_questions = parsed_from_content.get("review_questions") or note.review_questions
+    key_points = parsed_from_content.get("key_points") or note.key_points
+    follow_up_tasks = parsed_from_content.get("follow_up_tasks") or note.follow_up_tasks
 
     sections = {
         "summary": (summary or "").strip(),
         "inspirations": (inspirations or "").strip(),
         "expansion": (expansion or "").strip(),
         "guidance": (guidance or "").strip(),
+        "review_questions": (review_questions or "").strip(),
+        "key_points": (key_points or "").strip(),
+        "follow_up_tasks": (follow_up_tasks or "").strip(),
     }
 
     for key, value in parsed_from_content.items():
@@ -158,9 +171,11 @@ def iter_note_sections(note: Note) -> list[tuple[str, str, str]]:
         "inspirations",
         "expansion",
         "guidance",
+        "review_questions",
+        "key_points",
+        "follow_up_tasks",
         "history_link",
         "gap_analysis",
-        "review_questions",
         "homework",
         "expression_notes",
         "evaluation",
@@ -170,7 +185,15 @@ def iter_note_sections(note: Note) -> list[tuple[str, str, str]]:
         if key not in sections:
             continue
         value = sections[key].strip()
-        if key in {"summary", "inspirations", "expansion", "guidance"}:
+        if key in {
+            "summary",
+            "inspirations",
+            "expansion",
+            "guidance",
+            "review_questions",
+            "key_points",
+            "follow_up_tasks",
+        }:
             result.append((key, _NOTE_SECTION_TITLES[key], value or "（空）"))
             continue
         if value:
@@ -205,4 +228,3 @@ def _parse_markdown_sections(content: str) -> dict[str, str]:
         sections[key] = body
 
     return sections
-

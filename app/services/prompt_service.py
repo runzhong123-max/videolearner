@@ -5,14 +5,12 @@ from app.models.prompt_template import PromptTemplate
 from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.errors import ServiceError
+from app.services.prompt_library import PROMPT_KEY_NOTE, PROMPT_KEY_SYSTEM, load_prompt_text
 
 SCOPE_GLOBAL = "global"
 SCOPE_PROJECT = "project"
 SCOPE_SESSION = "session"
 ALLOWED_SCOPES = {SCOPE_GLOBAL, SCOPE_PROJECT, SCOPE_SESSION}
-
-DEFAULT_SYSTEM_PROMPT = "你是学习助手，请基于上下文输出结构化结果。"
-DEFAULT_USER_PROMPT = "请根据当前学习记录生成用户请求的输出内容。"
 
 
 @dataclass
@@ -22,6 +20,14 @@ class EffectivePrompt:
     system_prompt: str
     user_prompt: str
     source_template_id: int | None
+
+
+def get_default_system_prompt() -> str:
+    return load_prompt_text(PROMPT_KEY_SYSTEM)
+
+
+def get_default_note_generation_prompt() -> str:
+    return load_prompt_text(PROMPT_KEY_NOTE)
 
 
 class PromptService:
@@ -88,12 +94,12 @@ class PromptService:
         session_id: int | None = None,
     ) -> PromptTemplate:
         self._validate_scope(scope, project_id, session_id)
-        default_name = f"Default {scope.title()} Prompt"
+        default_name = f"VL Default {scope.title()} Prompt"
         return self.prompt_repository.upsert_scope_target(
             scope=scope,
             name=default_name,
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
-            user_prompt=DEFAULT_USER_PROMPT,
+            system_prompt=get_default_system_prompt(),
+            user_prompt=get_default_note_generation_prompt(),
             project_id=project_id,
             session_id=session_id,
         )
@@ -144,9 +150,9 @@ class PromptService:
 
         return EffectivePrompt(
             scope=SCOPE_GLOBAL,
-            name="Default Global Prompt",
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
-            user_prompt=DEFAULT_USER_PROMPT,
+            name="VL Default Global Prompt",
+            system_prompt=get_default_system_prompt(),
+            user_prompt=get_default_note_generation_prompt(),
             source_template_id=None,
         )
 
@@ -175,9 +181,9 @@ class PromptService:
             scope=scope,
             project_id=project_id,
             session_id=session_id,
-            name=f"Default {scope.title()} Prompt",
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
-            user_prompt=DEFAULT_USER_PROMPT,
+            name=f"VL Default {scope.title()} Prompt",
+            system_prompt=get_default_system_prompt(),
+            user_prompt=get_default_note_generation_prompt(),
             created_at=now,
             updated_at=now,
         )

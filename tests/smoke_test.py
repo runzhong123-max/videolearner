@@ -104,7 +104,7 @@ class DatabaseSmokeTest(unittest.TestCase):
             self.assertIn("schema_migrations", tables)
 
             versions = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(versions, 10)
+            self.assertEqual(versions, 11)
 
     def test_foreign_keys_enforced(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):

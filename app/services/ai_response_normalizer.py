@@ -43,6 +43,8 @@ class AIResponseNormalizer:
             "history_link",
             "gap_analysis",
             "review_questions",
+            "key_points",
+            "follow_up_tasks",
             "homework",
             "expression_notes",
             "evaluation",

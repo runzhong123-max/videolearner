@@ -17,3 +17,11 @@ class Note:
     guidance: str
     created_at: datetime
     updated_at: datetime
+    ai_provider: str = ""
+    ai_model: str = ""
+    review_questions: str = ""
+    key_points: str = ""
+    follow_up_tasks: str = ""
+    in_review_list: bool = False
+    is_key_note: bool = False
+    review_later: bool = False

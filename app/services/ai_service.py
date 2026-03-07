@@ -7,6 +7,13 @@ from app.services.ai_providers.ai_result import AIGenerationResult
 from app.services.ai_providers.base_provider import BaseAIProvider
 from app.services.ai_providers.provider_factory import AIProviderFactory
 from app.services.ai_response_normalizer import AIResponseNormalizer
+from app.services.prompt_library import (
+    PROMPT_KEY_IMAGE_CHAT,
+    PROMPT_KEY_RECORD_CHAT,
+    choose_chat_prompt_key,
+    load_prompt_text,
+    safe_render_template,
+)
 
 
 @dataclass
@@ -107,10 +114,23 @@ class AIService:
 
     @staticmethod
     def _build_chat_prompt(request: AIChatRequest) -> str:
-        return (
-            f"{request.user_prompt.strip()}\n\n"
-            "请围绕当前记录进行回答，优先引用记录内容与对话历史。"
-            "回答应简洁、可执行。\n\n"
-            "以下是上下文：\n"
-            f"{request.context_text}"
+        prompt_key = choose_chat_prompt_key(request.context_text)
+        if prompt_key not in {PROMPT_KEY_RECORD_CHAT, PROMPT_KEY_IMAGE_CHAT}:
+            prompt_key = PROMPT_KEY_RECORD_CHAT
+
+        template = load_prompt_text(prompt_key)
+        prompt = safe_render_template(
+            template,
+            system_prompt=request.system_prompt.strip(),
+            user_prompt=request.user_prompt.strip(),
+            context_text=request.context_text,
         )
+
+        if "user question" not in prompt.lower() and "用户问题" not in prompt:
+            prompt += (
+                "\n\nUser question:\n"
+                f"{request.user_prompt.strip()}\n\n"
+                "Context:\n"
+                f"{request.context_text}"
+            )
+        return prompt

@@ -111,7 +111,7 @@ class PromptPage(QWidget):
         btn_row = QHBoxLayout()
         load_btn = QPushButton("加载")
         save_btn = QPushButton("保存")
-        reset_btn = QPushButton("恢复默认")
+        reset_btn = QPushButton("Reset to VL Default Prompt")
 
         load_btn.clicked.connect(lambda: self._load_prompt(scope))
         save_btn.clicked.connect(lambda: self._save_prompt(scope))

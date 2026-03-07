@@ -1,4 +1,7 @@
 ﻿from dataclasses import dataclass
+from pathlib import Path
+
+from app.services.prompt_library import PROMPT_KEY_NOTE, load_prompt_text, safe_render_template
 
 
 @dataclass(frozen=True)
@@ -13,34 +16,33 @@ class PromptBuilder:
     """Builds user-facing prompt text under a stable section contract."""
 
     REQUIRED_KEYS = ["summary", "expansion", "inspirations", "guidance"]
+    LIGHT_REVIEW_KEYS = ["review_questions", "key_points", "follow_up_tasks"]
 
-    @classmethod
-    def build(cls, request: AIPromptBuildInput) -> str:
-        optional_keys = cls._resolve_optional_keys(request.output_options)
-        contract_keys = cls.REQUIRED_KEYS + optional_keys
+    def __init__(self, prompt_dir: Path | None = None):
+        self.prompt_dir = prompt_dir
 
+    def build(self, request: AIPromptBuildInput) -> str:
+        optional_keys = self._resolve_optional_keys(request.output_options)
+        contract_keys = self.REQUIRED_KEYS + optional_keys
         contract_desc = ", ".join(contract_keys)
-        instruction = (
-            "请严格返回 JSON 对象，不要返回 Markdown。"
-            f"JSON 键仅允许：{contract_desc}。"
-            "其中 summary/expansion 必须是非空字符串；"
-            "inspirations/guidance 必须存在，若无内容请返回空字符串。"
+
+        template = load_prompt_text(PROMPT_KEY_NOTE, prompt_dir=self.prompt_dir)
+        prompt = safe_render_template(
+            template,
+            system_prompt=request.system_prompt.strip(),
+            user_prompt=request.user_prompt.strip(),
+            context_text=request.context_text,
+            json_keys=contract_desc,
         )
 
-        return (
-            f"{request.user_prompt.strip()}\n\n"
-            f"{instruction}\n\n"
-            "[输出契约说明]\n"
-            "summary: 学习总结（必填）\n"
-            "expansion: 扩展建议（必填）\n"
-            "inspirations: 灵感提炼（无灵感时为空字符串）\n"
-            "guidance: 指导建议（无内容时为空字符串）\n\n"
-            "以下是输入上下文，请基于上下文生成：\n"
-            f"{request.context_text}"
-        )
+        if "return only json" not in prompt.lower():
+            prompt += (
+                "\n\nReturn ONLY JSON. Do not include markdown. Do not add explanation."
+                f"\nRequired JSON keys: {contract_desc}."
+            )
+        return prompt
 
-    @staticmethod
-    def _resolve_optional_keys(output_options: dict[str, bool]) -> list[str]:
+    def _resolve_optional_keys(self, output_options: dict[str, bool]) -> list[str]:
         optional_map = {
             "history_link": "history_link",
             "gap_analysis": "gap_analysis",
@@ -50,7 +52,10 @@ class PromptBuilder:
             "evaluation": "evaluation",
         }
         keys: list[str] = []
+        for key in self.LIGHT_REVIEW_KEYS:
+            keys.append(key)
+
         for option_key, target_key in optional_map.items():
-            if output_options.get(option_key, False):
+            if output_options.get(option_key, False) and target_key not in keys:
                 keys.append(target_key)
         return keys

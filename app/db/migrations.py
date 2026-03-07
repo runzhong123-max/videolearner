@@ -234,8 +234,20 @@ MIGRATIONS: list[tuple[int, Iterable[str]]] = [
             "CREATE INDEX IF NOT EXISTS idx_record_ocr_results_status ON record_ocr_results(ocr_status);",
         ],
     ),
+    (
+        11,
+        [
+            "ALTER TABLE notes ADD COLUMN ai_provider TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN ai_model TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN review_questions TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN key_points TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN follow_up_tasks TEXT NOT NULL DEFAULT '';",
+            "ALTER TABLE notes ADD COLUMN in_review_list INTEGER NOT NULL DEFAULT 0;",
+            "ALTER TABLE notes ADD COLUMN is_key_note INTEGER NOT NULL DEFAULT 0;",
+            "ALTER TABLE notes ADD COLUMN review_later INTEGER NOT NULL DEFAULT 0;",
+        ],
+    ),
 ]
-
 
 def run_migrations(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -261,3 +273,6 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(statement)
 
         conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+
+
+

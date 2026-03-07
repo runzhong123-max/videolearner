@@ -17,6 +17,7 @@ class NoteGenerationResult:
     project_id: int
     provider: str | None = None
     model: str | None = None
+    previous_versions_count: int = 0
 
 
 class NoteService:
@@ -34,6 +35,7 @@ class NoteService:
 
     def generate_note_for_session(self, session_id: int) -> NoteGenerationResult:
         context = self.context_builder.build_for_session(session_id)
+        previous_count = self.note_repository.count_by_session(session_id=session_id, note_type=NOTE_TYPE_SESSION_SUMMARY)
 
         sections = self.ai_service.generate_sections(
             AIGenerationRequest(
@@ -50,11 +52,15 @@ class NoteService:
         summary = sections["summary"]
         extension = sections["extension"]
         insight = sections.get("insight", "")
+        review_questions = sections.get("review_questions", "")
+        key_points = sections.get("key_points", "")
+        follow_up_tasks = sections.get("follow_up_tasks", "") or sections.get("homework", "")
 
         title = f"{context.project.name} - Session #{context.session.id} 学习笔记"
         content = self._compose_note_content(sections)
         guidance = self._compose_guidance(sections)
 
+        ai_result = self.ai_service.get_last_result()
         note_id = self.note_repository.create_generated(
             project_id=context.project.id,
             session_id=context.session.id,
@@ -65,6 +71,11 @@ class NoteService:
             suggestions=extension,
             inspiration_refinement=insight,
             guidance=guidance,
+            ai_provider=ai_result.provider if ai_result else "",
+            ai_model=(ai_result.model or "") if ai_result else "",
+            review_questions=review_questions,
+            key_points=key_points,
+            follow_up_tasks=follow_up_tasks,
         )
 
         # Persist session-level summary for future context building.
@@ -74,17 +85,58 @@ class NoteService:
         if created is None:
             raise ServiceError("笔记保存后读取失败。")
 
-        ai_result = self.ai_service.get_last_result()
         return NoteGenerationResult(
             note=created,
             session_id=context.session.id,
             project_id=context.project.id,
-            provider=ai_result.provider if ai_result else None,
-            model=ai_result.model if ai_result else None,
+            provider=created.ai_provider or None,
+            model=created.ai_model or None,
+            previous_versions_count=previous_count,
         )
 
     def get_latest_note_for_session(self, session_id: int) -> Note | None:
         return self.note_repository.get_by_session(session_id)
+
+    def list_note_versions_for_session(self, session_id: int, limit: int = 30) -> list[Note]:
+        return self.note_repository.list_by_session(
+            session_id=session_id,
+            note_type=NOTE_TYPE_SESSION_SUMMARY,
+            limit=limit,
+        )
+
+    def get_note_by_id(self, note_id: int) -> Note | None:
+        return self.note_repository.get_by_id(note_id)
+
+    def update_note_review_fields(
+        self,
+        note_id: int,
+        review_questions: str,
+        key_points: str,
+        follow_up_tasks: str,
+        in_review_list: bool,
+        is_key_note: bool,
+        review_later: bool,
+    ) -> Note:
+        existing = self.note_repository.get_by_id(note_id)
+        if existing is None:
+            raise ServiceError("笔记不存在，无法保存附加整理信息。")
+
+        updated = self.note_repository.update(
+            note_id,
+            review_questions=review_questions.strip(),
+            key_points=key_points.strip(),
+            follow_up_tasks=follow_up_tasks.strip(),
+            in_review_list=in_review_list,
+            is_key_note=is_key_note,
+            review_later=review_later,
+        )
+        if not updated:
+            raise ServiceError("附加整理信息保存失败。")
+
+        refreshed = self.note_repository.get_by_id(note_id)
+        if refreshed is None:
+            raise ServiceError("保存后读取笔记失败。")
+        return refreshed
 
     @staticmethod
     def _validate_output_sections(sections: dict[str, str], output_options: dict[str, bool]) -> None:
@@ -102,9 +154,11 @@ class NoteService:
             "summary",
             "extension",
             "insight",
+            "review_questions",
+            "key_points",
+            "follow_up_tasks",
             "history_link",
             "gap_analysis",
-            "review_questions",
             "homework",
             "expression_notes",
             "evaluation",
@@ -113,9 +167,11 @@ class NoteService:
             "summary": "Summary",
             "extension": "Extension",
             "insight": "Insight",
+            "review_questions": "Review Questions",
+            "key_points": "Key Points",
+            "follow_up_tasks": "Follow-up Tasks",
             "history_link": "History Link",
             "gap_analysis": "Gap Analysis",
-            "review_questions": "Review Questions",
             "homework": "Homework",
             "expression_notes": "Expression Notes",
             "evaluation": "Evaluation",
@@ -132,10 +188,11 @@ class NoteService:
 
     @staticmethod
     def _compose_guidance(sections: dict[str, str]) -> str:
-        keys = ["review_questions", "homework", "evaluation"]
+        keys = ["review_questions", "follow_up_tasks", "homework", "evaluation"]
         lines: list[str] = []
         for key in keys:
             text = sections.get(key, "").strip()
             if text:
                 lines.append(text)
         return "\n".join(lines)
+

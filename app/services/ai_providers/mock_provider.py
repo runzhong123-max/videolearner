@@ -10,6 +10,9 @@ DEFAULT_MOCK_SECTIONS = {
     "expansion": "Mock expansion for development",
     "inspirations": "Mock inspirations:\n- 关键概念：先建立定义再做对比\n- 可行动作：用 3 句话复述本段内容",
     "guidance": "Mock guidance",
+    "review_questions": "1) 本节核心概念是什么？\n2) 你会如何应用到当前项目？",
+    "key_points": "- 重点一：先抓主线\n- 重点二：再补细节",
+    "follow_up_tasks": "- 用 5 句话复述内容\n- 记录 1 个待验证问题",
 }
 
 

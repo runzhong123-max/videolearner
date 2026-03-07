@@ -1,7 +1,9 @@
-﻿from datetime import datetime
+﻿import subprocess
+from datetime import datetime
+from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtCore import QThread, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -47,6 +50,7 @@ from app.ui.view_helpers import (
     record_display_type,
     record_preview_text,
 )
+from app.ui.widgets import ImagePreviewLabel, ImageViewerDialog
 from app.utils.datetime_utils import format_cn_datetime, format_cn_datetime_seconds
 from app.utils.path_utils import resolve_record_file_path
 
@@ -113,6 +117,7 @@ class StudyPage(QWidget):
         self._records_by_id: dict[int, Record] = {}
         self._note_worker: GenerateNoteWorker | None = None
         self._chat_worker: RecordChatWorker | None = None
+        self._selected_image_path: Path | None = None
 
         self.project_label = QLabel("当前项目：未选择")
         self.status_label = QLabel("会话状态：not_started")
@@ -144,14 +149,19 @@ class StudyPage(QWidget):
 
         self.image_name_label = QLabel("图片名称：-")
         self.image_name_label.setWordWrap(True)
-        self.image_preview_label = QLabel("图片预览区域")
+        self.image_preview_label = ImagePreviewLabel()
+        self.image_preview_label.setText("图片预览区域")
         self.image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_preview_label.setMinimumHeight(260)
         self.image_preview_label.setStyleSheet("border: 1px solid #d0d0d0; background: #fafafa;")
+        self.image_preview_label.open_requested.connect(self._on_open_image_viewer)
+        self.image_preview_label.context_menu_requested.connect(self._on_image_context_menu)
         self.ocr_status_label = QLabel("OCR 状态：未处理")
         self.ocr_status_label.setWordWrap(True)
         self.ocr_run_btn = QPushButton("执行 OCR")
         self.ocr_run_btn.clicked.connect(self._on_run_ocr)
+        self.ocr_copy_btn = QPushButton("复制 OCR 文本")
+        self.ocr_copy_btn.clicked.connect(self._on_copy_ocr_text)
         self.ocr_text_edit = QTextEdit()
         self.ocr_text_edit.setReadOnly(True)
         self.ocr_text_edit.setPlaceholderText("OCR 结果将在这里显示。")
@@ -162,7 +172,10 @@ class StudyPage(QWidget):
         image_layout.addWidget(self.image_name_label)
         image_layout.addWidget(self.image_preview_label, 1)
         image_layout.addWidget(self.ocr_status_label)
-        image_layout.addWidget(self.ocr_run_btn)
+        ocr_btn_row = QHBoxLayout()
+        ocr_btn_row.addWidget(self.ocr_run_btn)
+        ocr_btn_row.addWidget(self.ocr_copy_btn)
+        image_layout.addLayout(ocr_btn_row)
         image_layout.addWidget(QLabel("OCR 文本"))
         image_layout.addWidget(self.ocr_text_edit)
 
@@ -822,6 +835,89 @@ class StudyPage(QWidget):
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
 
+    def _on_open_image_viewer(self) -> None:
+        image_path = self._selected_image_path
+        if image_path is None or not image_path.exists():
+            self._set_message("图片文件不存在，无法打开。", is_error=True)
+            return
+
+        viewer = ImageViewerDialog(image_path, self)
+        viewer.exec()
+
+    def _on_image_context_menu(self, global_pos) -> None:
+        record = self._get_selected_record()
+        if record is None or record.record_type != RECORD_TYPE_IMAGE:
+            return
+
+        menu = QMenu(self)
+        action_open = menu.addAction("Open Image")
+        action_show = menu.addAction("Show in Explorer")
+        action_copy_image = menu.addAction("Copy Image")
+        action_copy_path = menu.addAction("Copy Path")
+        menu.addSeparator()
+        action_delete = menu.addAction("Delete")
+
+        has_image_file = self._selected_image_path is not None and self._selected_image_path.exists()
+        action_open.setEnabled(has_image_file)
+        action_show.setEnabled(has_image_file)
+        action_copy_image.setEnabled(has_image_file)
+        action_copy_path.setEnabled(has_image_file)
+
+        picked = menu.exec(global_pos)
+        if picked == action_open:
+            self._on_open_image_viewer()
+        elif picked == action_show:
+            self._on_show_image_in_explorer()
+        elif picked == action_copy_image:
+            self._on_copy_image()
+        elif picked == action_copy_path:
+            self._on_copy_image_path()
+        elif picked == action_delete:
+            self._on_delete_record()
+
+    def _on_show_image_in_explorer(self) -> None:
+        image_path = self._selected_image_path
+        if image_path is None or not image_path.exists():
+            self._set_message("图片文件不存在，无法定位。", is_error=True)
+            return
+
+        try:
+            subprocess.run(["explorer", "/select,", str(image_path)], check=False)
+        except Exception:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(image_path.parent)))
+
+    def _on_copy_image(self) -> None:
+        image_path = self._selected_image_path
+        if image_path is None or not image_path.exists():
+            self._set_message("图片文件不存在，无法复制。", is_error=True)
+            return
+
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            self._set_message("图片加载失败，无法复制。", is_error=True)
+            return
+
+        QGuiApplication.clipboard().setPixmap(pixmap)
+        self._set_message("图片已复制到剪贴板。", is_error=False)
+
+    def _on_copy_image_path(self) -> None:
+        image_path = self._selected_image_path
+        if image_path is None or not image_path.exists():
+            self._set_message("图片文件不存在，无法复制路径。", is_error=True)
+            return
+
+        QGuiApplication.clipboard().setText(str(image_path))
+        self._set_message("图片路径已复制。", is_error=False)
+
+    def _on_copy_ocr_text(self) -> None:
+        text = self.ocr_text_edit.toPlainText().strip()
+        if not text:
+            self._set_message("当前没有可复制的 OCR 文本。", is_error=True)
+            return
+
+        QGuiApplication.clipboard().setText(text)
+        self._set_message("OCR 文本已复制。", is_error=False)
+
     def _on_run_ocr(self) -> None:
         record = self._get_selected_record()
         if record is None:
@@ -836,10 +932,13 @@ class StudyPage(QWidget):
 
         try:
             result = self.ocr_service.run_ocr_for_record(record.id)
-            self._set_message(
-                f"OCR 完成（provider={result.provider}）。",
-                is_error=False,
-            )
+            if (result.provider or "").strip().lower() == "mock_ocr":
+                self._set_message("OCR 完成（provider=mock_ocr，当前为模拟 OCR 结果）。", is_error=False)
+            else:
+                self._set_message(
+                    f"OCR 完成（provider={result.provider}）。",
+                    is_error=False,
+                )
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
 
@@ -850,24 +949,33 @@ class StudyPage(QWidget):
             self.ocr_status_label.setText("OCR 状态：服务未启用")
             self.ocr_text_edit.setPlainText("")
             self.ocr_run_btn.setEnabled(False)
+            self.ocr_run_btn.setText("执行 OCR")
+            self.ocr_copy_btn.setEnabled(False)
             return
 
         result = self.ocr_service.get_or_default_result(record.id)
-        self.ocr_status_label.setText(
-            f"OCR 状态：{self._format_ocr_status_label(result.ocr_status)}"
-        )
+        status_text = self._format_ocr_status_label(result.ocr_status)
+        provider_name = (result.provider or "").strip().lower()
+        if provider_name == "mock_ocr":
+            status_text += "（mock 模拟）"
+        self.ocr_status_label.setText(f"OCR 状态：{status_text}")
         if result.ocr_status == OCR_STATUS_FAILED and result.ocr_error:
             self.ocr_text_edit.setPlainText(f"OCR 失败：{result.ocr_error}")
         else:
             self.ocr_text_edit.setPlainText(result.ocr_text or "")
 
         selected = self._get_selected_record()
-        self.ocr_run_btn.setEnabled(selected is not None and selected.record_type == RECORD_TYPE_IMAGE)
+        can_run = selected is not None and selected.record_type == RECORD_TYPE_IMAGE
+        self.ocr_run_btn.setEnabled(can_run)
+        self.ocr_run_btn.setText("重新执行 OCR" if result.ocr_status == OCR_STATUS_COMPLETED else "执行 OCR")
+        self.ocr_copy_btn.setEnabled(bool((result.ocr_text or "").strip()))
 
     def _reset_ocr_panel(self) -> None:
         self.ocr_status_label.setText("OCR 状态：-")
         self.ocr_text_edit.setPlainText("")
+        self.ocr_run_btn.setText("执行 OCR")
         self.ocr_run_btn.setEnabled(False)
+        self.ocr_copy_btn.setEnabled(False)
 
     @staticmethod
     def _format_ocr_status_label(status: str) -> str:
@@ -947,15 +1055,19 @@ class StudyPage(QWidget):
         if record.record_type == RECORD_TYPE_IMAGE:
             self.image_name_label.setText(f"图片名称：{record_display_name(record)}")
             resolved = resolve_record_file_path(record.file_path)
-            if resolved is None or not resolved.exists():
+            self._selected_image_path = resolved if resolved is not None and resolved.exists() else None
+            self.image_preview_label.set_image_file_path(self._selected_image_path)
+
+            if self._selected_image_path is None:
                 self.image_preview_label.setText("图片文件不存在，无法预览。")
                 self.image_preview_label.setPixmap(QPixmap())
             else:
-                pixmap = QPixmap(str(resolved))
+                pixmap = QPixmap(str(self._selected_image_path))
                 if pixmap.isNull():
                     self.image_preview_label.setText("图片加载失败，无法预览。")
                     self.image_preview_label.setPixmap(QPixmap())
                 else:
+                    self.image_preview_label.setText("")
                     scaled = pixmap.scaled(
                         760,
                         520,
@@ -968,6 +1080,8 @@ class StudyPage(QWidget):
             self._refresh_chat_panel(record)
             return
 
+        self._selected_image_path = None
+        self.image_preview_label.set_image_file_path(None)
         self._reset_ocr_panel()
         full_text = (record.content or "").strip() or record_preview_text(record, max_len=500)
         self.record_text_edit.setPlainText(full_text)
@@ -993,6 +1107,10 @@ class StudyPage(QWidget):
             f"标题：{note.title or '-'} | 更新时间：{format_cn_datetime_seconds(note.updated_at)}"
         )
         self.note_preview_edit.setPlainText(build_note_preview_text(note))
+        self._selected_image_path = None
+        self.image_preview_label.set_image_file_path(None)
+        self.image_preview_label.setPixmap(QPixmap())
+        self.image_preview_label.setText("图片预览区域")
         self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(1)
         self._reset_chat_panel("请选择 Record 后发起智能对话。")
@@ -1001,6 +1119,10 @@ class StudyPage(QWidget):
         self.detail_title_label.setText("详情预览")
         self.detail_meta_label.setText("-")
         self.placeholder_label.setText(text)
+        self._selected_image_path = None
+        self.image_preview_label.set_image_file_path(None)
+        self.image_preview_label.setPixmap(QPixmap())
+        self.image_preview_label.setText("图片预览区域")
         self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(0)
         self._reset_chat_panel("请选择 Record 后发起智能对话。")
@@ -1201,10 +1323,5 @@ class StudyPage(QWidget):
             f"时间：{format_cn_datetime_seconds(record.created_at)}\n"
             f"内容：{preview}"
         )
-
-
-
-
-
 
 

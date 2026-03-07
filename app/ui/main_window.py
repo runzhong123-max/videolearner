@@ -14,6 +14,7 @@ from app.models.session import Session
 from app.services.ai_settings_service import AISettingsService
 from app.services.note_service import NoteService
 from app.services.ocr_service import OCRService
+from app.services.ocr_settings_service import OCRSettingsService
 from app.services.output_profile_service import OutputProfileService
 from app.services.project_service import ProjectService
 from app.services.prompt_service import PromptService
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         output_profile_service: OutputProfileService,
         note_service: NoteService,
         ai_settings_service: AISettingsService | None = None,
+        ocr_settings_service: OCRSettingsService | None = None,
         shortcut_settings_service: ShortcutSettingsService | None = None,
         shortcut_manager: ShortcutManager | None = None,
         record_chat_service: RecordChatService | None = None,
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         self.output_profile_service = output_profile_service
         self.note_service = note_service
         self.ai_settings_service = ai_settings_service
+        self.ocr_settings_service = ocr_settings_service
         self.shortcut_settings_service = shortcut_settings_service
         self.shortcut_manager = shortcut_manager
         self.record_chat_service = record_chat_service
@@ -82,7 +85,10 @@ class MainWindow(QMainWindow):
         self.note_page = NotePage(note_service=self.note_service)
 
         if self.ai_settings_service is not None:
-            self.ai_settings_page: QWidget = AISettingsPage(ai_settings_service=self.ai_settings_service)
+            self.ai_settings_page: QWidget = AISettingsPage(
+                ai_settings_service=self.ai_settings_service,
+                ocr_settings_service=self.ocr_settings_service,
+            )
         else:
             self.ai_settings_page = QLabel("AI Settings Service 未启用。")
 

@@ -18,12 +18,23 @@ from app.services.ai_settings_service import (
     ROUTE_SESSION_NOTE_PROVIDER,
     SUPPORTED_AI_PROVIDERS,
 )
+from app.services.ocr_providers.provider_factory import (
+    OCR_PROVIDER_MOCK,
+    SUPPORTED_OCR_PROVIDERS,
+)
+from app.services.ocr_settings_service import OCRSettingsService
 
 
 class AISettingsPage(QWidget):
-    def __init__(self, ai_settings_service: AISettingsService, parent=None):
+    def __init__(
+        self,
+        ai_settings_service: AISettingsService,
+        ocr_settings_service: OCRSettingsService | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.ai_settings_service = ai_settings_service
+        self.ocr_settings_service = ocr_settings_service
         self._provider_cache: dict[str, dict] = {}
 
         self.default_provider_combo = QComboBox()
@@ -38,6 +49,10 @@ class AISettingsPage(QWidget):
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 600)
         self.timeout_spin.setValue(60)
+
+        self.ocr_provider_combo = QComboBox()
+        self.ocr_tesseract_path_edit = QLineEdit()
+        self.ocr_lang_edit = QLineEdit()
 
         self.route_preview_label = QLabel("功能路由：-")
         self.route_preview_label.setWordWrap(True)
@@ -55,11 +70,18 @@ class AISettingsPage(QWidget):
             self.route_session_note_combo.addItem(provider, provider)
             self.route_record_chat_combo.addItem(provider, provider)
 
+        for provider in SUPPORTED_OCR_PROVIDERS:
+            self.ocr_provider_combo.addItem(provider, provider)
+
         self.edit_provider_combo.currentIndexChanged.connect(self._on_provider_changed)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_global_group())
         layout.addWidget(self._build_provider_group())
+        if self.ocr_settings_service is not None:
+            layout.addWidget(self._build_ocr_group())
+        else:
+            layout.addWidget(QLabel("OCR Settings Service 未启用。"))
         layout.addWidget(self.route_preview_label)
         layout.addWidget(self.message_label)
         layout.addStretch(1)
@@ -110,6 +132,30 @@ class AISettingsPage(QWidget):
         form.addRow(wrapper)
         return group
 
+    def _build_ocr_group(self) -> QGroupBox:
+        group = QGroupBox("OCR 设置（Tesseract）")
+        form = QFormLayout(group)
+
+        self.ocr_tesseract_path_edit.setPlaceholderText(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+        self.ocr_lang_edit.setPlaceholderText("chi_sim+eng")
+
+        form.addRow("OCR Provider", self.ocr_provider_combo)
+        form.addRow("Tesseract Path", self.ocr_tesseract_path_edit)
+        form.addRow("OCR Language", self.ocr_lang_edit)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("保存 OCR 设置")
+        save_btn.clicked.connect(self._on_save_ocr_settings)
+        test_btn = QPushButton("Test OCR")
+        test_btn.clicked.connect(self._on_test_ocr)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(test_btn)
+
+        wrapper = QWidget()
+        wrapper.setLayout(btn_row)
+        form.addRow(wrapper)
+        return group
+
     def _reload_settings(self) -> None:
         settings = self.ai_settings_service.load_settings()
 
@@ -134,7 +180,17 @@ class AISettingsPage(QWidget):
 
         self._on_provider_changed()
         self._refresh_route_preview()
+        self._reload_ocr_settings()
         self._set_message("AI 设置已加载。", is_error=False)
+
+    def _reload_ocr_settings(self) -> None:
+        if self.ocr_settings_service is None:
+            return
+
+        settings = self.ocr_settings_service.load_settings()
+        self._set_combo_by_value(self.ocr_provider_combo, settings.provider)
+        self.ocr_tesseract_path_edit.setText(settings.tesseract_cmd)
+        self.ocr_lang_edit.setText(settings.ocr_lang)
 
     def _on_provider_changed(self) -> None:
         provider = self.edit_provider_combo.currentData()
@@ -188,6 +244,24 @@ class AISettingsPage(QWidget):
         except Exception as exc:
             self._set_message(str(exc), is_error=True)
 
+    def _on_save_ocr_settings(self) -> None:
+        if self.ocr_settings_service is None:
+            self._set_message("OCR Settings Service 未启用。", is_error=True)
+            return
+
+        try:
+            state = self.ocr_settings_service.save_settings(
+                provider=self.ocr_provider_combo.currentData() or OCR_PROVIDER_MOCK,
+                tesseract_cmd=self.ocr_tesseract_path_edit.text(),
+                ocr_lang=self.ocr_lang_edit.text(),
+            )
+            if state.provider == OCR_PROVIDER_MOCK:
+                self._set_message("OCR 设置已保存（当前为 mock_ocr 模拟模式）。", is_error=False)
+            else:
+                self._set_message("OCR 设置已保存。", is_error=False)
+        except Exception as exc:
+            self._set_message(f"保存 OCR 设置失败：{exc}", is_error=True)
+
     def _on_test_provider(self) -> None:
         provider = self.edit_provider_combo.currentData()
         if provider is None:
@@ -219,6 +293,29 @@ class AISettingsPage(QWidget):
             self._set_message(f"配置错误：{exc}", is_error=True)
         except Exception as exc:
             self._set_message(f"测试异常：{exc}", is_error=True)
+
+    def _on_test_ocr(self) -> None:
+        if self.ocr_settings_service is None:
+            self._set_message("OCR Settings Service 未启用。", is_error=True)
+            return
+
+        try:
+            self.ocr_settings_service.save_settings(
+                provider=self.ocr_provider_combo.currentData() or OCR_PROVIDER_MOCK,
+                tesseract_cmd=self.ocr_tesseract_path_edit.text(),
+                ocr_lang=self.ocr_lang_edit.text(),
+            )
+            result = self.ocr_settings_service.test_provider_connection()
+            if result.success:
+                info = result.text.strip() or "OCR 测试成功。"
+                self._set_message(f"OCR 测试成功：provider={result.provider}。{info}", is_error=False)
+            else:
+                self._set_message(
+                    f"OCR 测试失败：provider={result.provider}。{result.error or '未知错误'}",
+                    is_error=True,
+                )
+        except Exception as exc:
+            self._set_message(f"OCR 测试异常：{exc}", is_error=True)
 
     def _refresh_route_preview(self) -> None:
         note_provider = self.ai_settings_service.resolve_provider_name(ROUTE_SESSION_NOTE_PROVIDER)

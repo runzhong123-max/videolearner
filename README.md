@@ -16,8 +16,10 @@ Windows 桌面学习工作台（Python + PySide6 + SQLite）。
 - Phase 6：AI Provider 设置中心 + 生成体验增强（基础版）
 - Phase 7：快捷键与高效工作流增强（基础版）
 - Phase 8：OCR / image 多模态问答（最小闭环）/ 活动窗口优先截图（含 fallback）
+- Phase 9：轻量整理增强与可选复盘入口（Note 版本保留 + 复盘附加区）
+- Phase P1：Prompt System & Image UX Polish（默认 Prompt 体系 + Image 交互增强）
 
-## Phase 5 ~ 8 已实现
+## Phase 5 ~ 9 已实现
 - StudyPage 升级为 Session 浏览区 / Record 时间线区 / 详情预览区
 - Session 列表显示：标题、状态、开始时间、Record 数量、是否有 Note
 - Record 时间线支持 image 缩略图、text/insight 摘要、北京时间与相对时间
@@ -25,14 +27,21 @@ Windows 桌面学习工作台（Python + PySide6 + SQLite）。
 - Record 详情区接入 Record 级 AI 对话：开始/继续对话、历史消息展示、输入框发送
 - 对话按 `record_id` 持久化到数据库，可再次打开同一 Record 继续追问
 - image Record 支持最小可用问答链路（优先 OCR 文本 + 图片元信息 + 历史对话）
-- image Record 详情区支持 OCR 状态与 OCR 文本展示，可手动触发 OCR
+- image Record 详情区支持 OCR 状态与 OCR 文本展示，可手动触发 / 重新执行 OCR / 复制 OCR 文本
+- OCR 正式支持本地 `local_ocr`（Tesseract + pytesseract），并保留 `mock_ocr` 供离线测试
 - CaptureService 支持 `full_screen` / `active_window` / `region(future)` 模式接口
 - `active_window` 不可用时自动回退 `full_screen`，并写入 capture metadata
 - NotePage 升级为分块阅读（Summary / Inspirations / Expansion / Guidance + 可选模块）
+- Note 支持轻量版本保留与版本切换（重新生成不覆盖旧版）
+- Note 支持轻量复盘附加区（review_questions / key_points / follow_up_tasks）
+- Note 支持轻量标记（加入复习列表 / 标记重点 / 稍后复习）
 - 新增 AI Settings 页面：可设置默认 Provider、功能路由、Provider 参数（api_key/base_url/model/timeout）
 - 新增最小功能路由：`session_note_provider`、`record_chat_provider`，未配置时回退 `default_provider`
 - 新增 Provider 连接测试：mock 离线直通；真实 Provider 走最小请求并返回可读结果
 - 新增全局快捷键管理（Windows 优先）和 Shortcuts 配置页面
+- Prompt 文件化：`app/prompts/system_prompt.txt`、`note_generation.txt`、`record_chat.txt`、`image_chat.txt`（缺失时自动回退内置默认）
+- PromptPage 支持一键恢复 `Reset to VL Default Prompt`
+- Image Record 详情区支持：双击全屏查看（滚轮缩放/拖拽平移/ESC 关闭）、拖拽导出到系统、右键菜单（Open Image / Show in Explorer / Copy Image / Copy Path / Delete）
 
 ## 快捷键默认值（Phase 7）
 - 开始学习：`ctrl+alt+s`
@@ -102,6 +111,8 @@ Provider 层统一返回 `AIGenerationResult`：
 - Pillow（截图）
 - requests（模型调用）
 - keyboard（Windows 全局快捷键）
+- pytesseract（本地 OCR）
+- Tesseract OCR（系统安装）
 
 ## 快速开始
 ```powershell
@@ -122,6 +133,28 @@ $env:AI_PROVIDER="mock"
 py -m app.main
 ```
 
+
+## 本地 OCR（Tesseract）
+- OCR Provider 支持：`mock_ocr`（模拟） / `local_ocr`（本地真实 OCR）
+- 推荐默认语言：`chi_sim+eng`
+- Windows 默认安装路径常见为：`C:\Program Files\Tesseract-OCR\tesseract.exe`
+
+### Windows 安装步骤
+1. 安装 Tesseract（包含中文语言包 `chi_sim`）。
+2. 在应用中打开 `AI Settings` 页面，找到 OCR 设置区。
+3. 设置：
+   - `OCR Provider = local_ocr`
+   - `Tesseract Path = C:\Program Files\Tesseract-OCR\tesseract.exe`（按本机实际路径）
+   - `OCR Language = chi_sim+eng`
+4. 点击 `Test OCR` 验证配置。
+
+### mock_ocr 与 local_ocr 区别
+- `mock_ocr`：离线模拟文本，适合测试，不依赖本机安装。
+- `local_ocr`：真实本地识别，依赖 `pytesseract + Tesseract`。
+
+### 常见提示
+- 若未安装 Tesseract 或路径错误，会提示：未找到 Tesseract 可执行文件或路径不存在。
+- 若 provider 为 `mock_ocr`，UI 会明确显示这是模拟 OCR 结果。
 ## 自动化测试
 ```powershell
 py -m unittest tests.smoke_test -v
@@ -136,6 +169,9 @@ py -m unittest tests.phase55_record_chat_test -v
 py -m unittest tests.phase6_ai_settings_test -v
 py -m unittest tests.phase7_shortcut_workflow_test -v
 py -m unittest tests.phase8_ocr_image_multimodal_test -v
+py -m unittest tests.phase8_local_ocr_integration_test -v
+py -m unittest tests.phase9_note_lightweight_test -v
+py -m unittest tests.phasep1_prompt_image_ux_test -v
 py -W error::ResourceWarning -m unittest tests.smoke_test -v
 ```
 
@@ -164,3 +200,5 @@ assets/
 exports/
 docs/
 ```
+
+
