@@ -11,6 +11,7 @@ env/
 # Build / packaging
 build/
 dist/
+dist_installer/
 *.egg-info/
 .eggs/
 
@@ -39,3 +40,5 @@ data/projects/
 .env
 .env.*
 !.env.example
+
+

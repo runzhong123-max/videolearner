@@ -1,4 +1,4 @@
-﻿from PySide6.QtGui import QCloseEvent
+﻿from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -23,12 +24,12 @@ from app.services.record_service import RecordService
 from app.services.shortcut_manager import ShortcutManager
 from app.services.shortcut_settings_service import ShortcutSettingsService
 from app.services.session_service import SessionService
-from app.ui.pages.ai_settings_page import AISettingsPage
+from app.ui.pages.library_page import LibraryPage
 from app.ui.pages.note_page import NotePage
 from app.ui.pages.project_page import ProjectPage
-from app.ui.pages.prompt_page import PromptPage
-from app.ui.pages.shortcut_settings_page import ShortcutSettingsPage
+from app.ui.pages.settings_page import SettingsPage
 from app.ui.pages.study_page import StudyPage
+from app.utils.runtime_paths import icon_path
 
 
 class MainWindow(QMainWindow):
@@ -64,12 +65,22 @@ class MainWindow(QMainWindow):
         self.current_session: Session | None = None
 
         self.setWindowTitle("VideoLearner")
-        self.resize(1280, 780)
+        self.resize(1440, 860)
+
+        app_icon = icon_path()
+        if app_icon.exists():
+            self.setWindowIcon(QIcon(str(app_icon)))
 
         self.nav = QListWidget()
-        self.nav.setFixedWidth(180)
+        self.nav.setObjectName("SideNav")
+        self.nav.setFixedWidth(200)
 
-        self.project_page = ProjectPage(self.project_service)
+        self.brand_title = QLabel("VL")
+        self.brand_title.setProperty("role", "pageTitle")
+        self.brand_subtitle = QLabel("学习记录工具")
+        self.brand_subtitle.setProperty("role", "pageSubtitle")
+
+        self.project_page = ProjectPage(self.project_service, self.session_service, self.note_service)
         self.study_page = StudyPage(
             self.session_service,
             self.record_service,
@@ -77,29 +88,19 @@ class MainWindow(QMainWindow):
             self.record_chat_service,
             ocr_service=self.ocr_service,
         )
-        self.prompt_page = PromptPage(
-            prompt_service=self.prompt_service,
-            output_profile_service=self.output_profile_service,
+        self.library_page = LibraryPage(
+            project_service=self.project_service,
             session_service=self.session_service,
+            record_service=self.record_service,
+            note_service=self.note_service,
         )
         self.note_page = NotePage(note_service=self.note_service)
-
-        if self.ai_settings_service is not None:
-            self.ai_settings_page: QWidget = AISettingsPage(
-                ai_settings_service=self.ai_settings_service,
-                ocr_settings_service=self.ocr_settings_service,
-            )
-        else:
-            self.ai_settings_page = QLabel("AI Settings Service 未启用。")
-
-        if self.shortcut_settings_service is not None and self.shortcut_manager is not None:
-            self.shortcut_settings_page: QWidget = ShortcutSettingsPage(
-                shortcut_settings_service=self.shortcut_settings_service,
-                shortcut_manager=self.shortcut_manager,
-            )
-            self.shortcut_settings_page.shortcuts_saved.connect(self._on_shortcuts_saved)
-        else:
-            self.shortcut_settings_page = QLabel("Shortcut Service 未启用。")
+        self.settings_page = SettingsPage(
+            ai_settings_service=self.ai_settings_service,
+            ocr_settings_service=self.ocr_settings_service,
+            shortcut_settings_service=self.shortcut_settings_service,
+            shortcut_manager=self.shortcut_manager,
+        )
 
         self.project_page.project_selected.connect(self._on_project_selected)
         self.study_page.session_selected.connect(self._on_session_selected)
@@ -107,12 +108,11 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.pages = [
-            ("Study", self.study_page),
-            ("Project", self.project_page),
-            ("Prompt", self.prompt_page),
-            ("Note", self.note_page),
-            ("AI Settings", self.ai_settings_page),
-            ("Shortcuts", self.shortcut_settings_page),
+            ("学习", self.study_page),
+            ("资料库", self.library_page),
+            ("项目", self.project_page),
+            ("笔记", self.note_page),
+            ("设置", self.settings_page),
         ]
 
         for title, page in self.pages:
@@ -122,13 +122,31 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._on_nav_changed)
         self.nav.setCurrentRow(0)
 
+        nav_shell = QWidget()
+        nav_layout = QVBoxLayout(nav_shell)
+        nav_layout.setContentsMargins(16, 20, 16, 20)
+        nav_layout.setSpacing(8)
+        nav_layout.addWidget(self.brand_title)
+        nav_layout.addWidget(self.brand_subtitle)
+        nav_layout.addWidget(self.nav, 1)
+        nav_shell.setObjectName("AppShell")
+
+        content_shell = QWidget()
+        content_shell.setObjectName("ContentShell")
+        content_layout = QHBoxLayout(content_shell)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self.stack)
+
         shell = QWidget()
+        shell.setObjectName("AppShell")
         layout = QHBoxLayout(shell)
-        layout.addWidget(self.nav)
-        layout.addWidget(self.stack, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(nav_shell)
+        layout.addWidget(content_shell, 1)
 
         self.setCentralWidget(shell)
-        self.statusBar().showMessage("请选择项目并开始学习。")
+        self.statusBar().showMessage("请选择项目并开始学习记录。")
 
         if self.shortcut_manager is not None:
             self.shortcut_manager.action_triggered.connect(self._on_shortcut_action_triggered)
@@ -141,8 +159,8 @@ class MainWindow(QMainWindow):
     def _on_nav_changed(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
         current_widget = self.stack.widget(index)
-        if current_widget is self.prompt_page:
-            self.prompt_page.set_current_project(self.current_project)
+        if current_widget is self.library_page:
+            self.library_page.set_current_project(self.current_project)
         elif current_widget is self.note_page:
             self.note_page.set_current_project(self.current_project)
             self.note_page.set_selected_session(self.current_session)
@@ -153,7 +171,7 @@ class MainWindow(QMainWindow):
 
         self.study_page.set_current_project(project)
         self.project_page.set_current_project(project)
-        self.prompt_page.set_current_project(project)
+        self.library_page.set_current_project(project)
         self.note_page.set_current_project(project)
         self.note_page.set_selected_session(None)
 
@@ -172,10 +190,10 @@ class MainWindow(QMainWindow):
             provider_text = f" | provider={result.provider}"
             if getattr(result, "model", None):
                 provider_text += f"/{result.model}"
+        self.library_page.refresh_view()
         self.statusBar().showMessage(
             f"Session #{result.session_id} 笔记已生成并保存{provider_text}。"
         )
-        self.note_page.refresh_view()
 
     def _on_shortcut_action_triggered(self, action: str) -> None:
         message = self.study_page.trigger_shortcut_action(action)
@@ -185,10 +203,8 @@ class MainWindow(QMainWindow):
     def _on_shortcut_registration_failed(self, message: str) -> None:
         self.statusBar().showMessage(message)
 
-    def _on_shortcuts_saved(self, _bindings: dict) -> None:
-        self.statusBar().showMessage("快捷键配置已更新。")
-
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.shortcut_manager is not None:
             self.shortcut_manager.stop()
         super().closeEvent(event)
+

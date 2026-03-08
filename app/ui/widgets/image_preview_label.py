@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl, Signal
-from PySide6.QtGui import QDrag, QMouseEvent, QPixmap
+from PySide6.QtGui import QDrag, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel
 
 
@@ -13,6 +13,9 @@ class ImagePreviewLabel(QLabel):
         super().__init__(parent)
         self._image_file_path: Path | None = None
         self._drag_start_pos: QPoint | None = None
+        self._source_pixmap: QPixmap | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setScaledContents(False)
 
     def set_image_file_path(self, path: Path | None) -> None:
         self._image_file_path = path
@@ -20,6 +23,41 @@ class ImagePreviewLabel(QLabel):
             self.setToolTip(str(path))
         else:
             self.setToolTip("")
+
+    def setPixmap(self, pixmap: QPixmap) -> None:  # noqa: N802
+        if pixmap.isNull():
+            self._source_pixmap = None
+            super().setPixmap(QPixmap())
+            return
+
+        self._source_pixmap = QPixmap(pixmap)
+        self._refresh_scaled_pixmap()
+
+    def clear(self) -> None:
+        self._source_pixmap = None
+        super().clear()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._refresh_scaled_pixmap()
+
+    def _refresh_scaled_pixmap(self) -> None:
+        if self._source_pixmap is None or self._source_pixmap.isNull():
+            return
+
+        target_size = self.contentsRect().size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
+
+        dpr = self.devicePixelRatioF()
+        scaled = self._source_pixmap.scaled(
+            int(target_size.width() * dpr),
+            int(target_size.height() * dpr),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        scaled.setDevicePixelRatio(dpr)
+        super().setPixmap(scaled)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._image_file_path is not None:

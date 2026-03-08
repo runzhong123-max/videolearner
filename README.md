@@ -172,6 +172,7 @@ py -m unittest tests.phase8_ocr_image_multimodal_test -v
 py -m unittest tests.phase8_local_ocr_integration_test -v
 py -m unittest tests.phase9_note_lightweight_test -v
 py -m unittest tests.phasep1_prompt_image_ux_test -v
+py -m unittest tests.packaging_runtime_paths_test -v
 py -W error::ResourceWarning -m unittest tests.smoke_test -v
 ```
 
@@ -200,5 +201,68 @@ assets/
 exports/
 docs/
 ```
+
+
+
+## Windows 打包（Packaging P1）
+
+### 打包前准备
+```powershell
+.venv\Scripts\activate
+py -m pip install pyinstaller
+```
+
+图标文件路径（默认约定）：
+- `assets/icons/videolearner.ico`
+
+> 若你要替换图标，直接覆盖同名 `.ico` 文件即可。
+
+### 使用 spec 打包（推荐 onedir）
+```powershell
+py -m PyInstaller --clean packaging/pyinstaller/VideoLearner.spec
+```
+
+### 输出目录说明
+- `build/VideoLearner/`：PyInstaller 中间构建目录
+- `dist/VideoLearner/`：可分发目录（onedir）
+  - 主程序：`dist/VideoLearner/VideoLearner.exe`
+  - prompts 资源：`dist/VideoLearner/app/prompts/`
+  - 图标资源：`dist/VideoLearner/assets/icons/videolearner.ico`
+
+### 打包后运行
+```powershell
+.\dist\VideoLearner\VideoLearner.exe
+```
+
+### 资源路径兼容机制
+项目已统一通过 `app/utils/runtime_paths.py` 处理运行时路径：
+- 源码模式：按仓库目录读取资源
+- PyInstaller 模式：优先从 bundle 目录（`_MEIPASS`）读取资源
+- 可写数据目录：
+  - 源码模式：仓库根目录
+  - 打包模式：`%LOCALAPPDATA%\VideoLearner`（可通过 `VIDEOLEARNER_HOME` 覆盖）
+
+### OCR（Tesseract）外部依赖说明
+- 本阶段不把 Tesseract 打进安装包。
+- OCR 仍是可选增强能力：
+  - `mock_ocr`：无需安装 Tesseract，可离线使用
+  - `local_ocr`：需本机安装 Tesseract 并在 GUI 中配置路径
+- 未安装 Tesseract 时，程序主流程可正常启动，OCR 会给出友好错误提示。
+
+### 常见排查
+1. 打包后 Prompt 读取异常：
+   - 检查 `dist/VideoLearner/app/prompts/` 是否存在
+   - 检查是否用的是 `packaging/pyinstaller/VideoLearner.spec`
+2. 图标未生效：
+   - 检查 `assets/icons/videolearner.ico` 是否存在且为有效 `.ico`
+   - 重新执行 `--clean` 打包
+3. 数据写入权限问题：
+   - 设置环境变量 `VIDEOLEARNER_HOME` 指向可写目录
+
+### Inno Setup 脚本雏形（可选）
+已预留：
+- `packaging/installer/VideoLearner.iss`
+
+用于下一阶段正式安装包制作，当前为最小框架版本。
 
 

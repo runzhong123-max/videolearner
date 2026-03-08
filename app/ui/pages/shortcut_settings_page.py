@@ -65,10 +65,16 @@ class ShortcutSettingsPage(QWidget):
         self.shortcut_manager = shortcut_manager
         self.editors: dict[str, QLineEdit] = {}
 
+        intro_label = QLabel("当前阶段只保留快捷键文本编辑，不提前进入快捷键录制态。")
+        intro_label.setWordWrap(True)
+        intro_label.setProperty("role", "sectionHint")
+
         self.message_label = QLabel("")
         self.message_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.addWidget(intro_label)
         layout.addWidget(self._build_editor_group())
         layout.addWidget(self._build_help_group())
         layout.addWidget(self.message_label)
@@ -82,7 +88,8 @@ class ShortcutSettingsPage(QWidget):
 
         for action in SHORTCUT_ACTIONS:
             editor = QLineEdit()
-            editor.setPlaceholderText("如 ctrl+alt+s")
+            editor.setPlaceholderText("例如 ctrl+alt+s")
+            editor.setClearButtonEnabled(True)
             self.editors[action] = editor
             form.addRow(ACTION_LABELS[action], editor)
 
@@ -104,13 +111,18 @@ class ShortcutSettingsPage(QWidget):
         return group
 
     def _build_help_group(self) -> QGroupBox:
-        group = QGroupBox("说明")
+        group = QGroupBox("键位参考")
         layout = QGridLayout(group)
 
-        layout.addWidget(QLabel("1. 快捷键格式示例：ctrl+alt+s、ctrl+shift+a。"), 0, 0)
-        layout.addWidget(QLabel("2. 保存后会立即重新注册快捷键。"), 1, 0)
-        layout.addWidget(QLabel("3. 为避免冲突，默认未使用 Tab 作为全局截图热键。"), 2, 0)
-        layout.addWidget(QLabel("4. 若系统占用导致注册失败，会在消息区提示。"), 3, 0)
+        for index, text in enumerate([
+            "1. 快捷键格式示例：ctrl+alt+s、ctrl+shift+a。",
+            "2. 保存后会立即重新注册快捷键。",
+            "3. 为避免冲突，默认未使用 Tab 作为全局截图热键。",
+            "4. 若系统占用导致注册失败，会在消息区提示。",
+        ]):
+            label = QLabel(text)
+            label.setProperty("role", "muted")
+            layout.addWidget(label, index, 0)
 
         key_table = QTableWidget(len(SHORTCUT_KEY_REFERENCE), 2)
         key_table.setHorizontalHeaderLabels(["键位名称", "说明"])
@@ -165,16 +177,13 @@ class ShortcutSettingsPage(QWidget):
             self._set_message(str(exc), is_error=True)
 
     def _collect_bindings_from_ui(self) -> dict[str, str]:
-        return {
-            action: self.editors[action].text().strip()
-            for action in SHORTCUT_ACTIONS
-        }
+        return {action: self.editors[action].text().strip() for action in SHORTCUT_ACTIONS}
 
     def _load_bindings_to_ui(self, bindings: dict[str, str]) -> None:
         for action in SHORTCUT_ACTIONS:
             self.editors[action].setText(bindings.get(action, ""))
 
     def _set_message(self, text: str, is_error: bool) -> None:
-        color = "#b00020" if is_error else "#2e7d32"
+        color = "#d96b6b" if is_error else "#7db48a"
         self.message_label.setStyleSheet(f"color: {color};")
         self.message_label.setText(text)

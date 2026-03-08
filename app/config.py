@@ -2,7 +2,9 @@
 from dataclasses import dataclass
 import os
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+from app.utils.runtime_paths import writable_root
+
+BASE_DIR = writable_root()
 DB_DIR = BASE_DIR / "data"
 DB_PATH = DB_DIR / "videolearner.db"
 PROJECTS_DATA_DIR = DB_DIR / "projects"

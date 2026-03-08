@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -16,8 +17,11 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -45,10 +49,13 @@ from app.services.session_service import (
 from app.ui.view_helpers import (
     build_note_preview_text,
     build_record_item_text,
+    build_session_display_numbers,
     build_session_item_text,
     record_display_name,
     record_display_type,
     record_preview_text,
+    session_display_label,
+    sort_sessions_for_display,
 )
 from app.ui.widgets import ImagePreviewLabel, ImageViewerDialog
 from app.utils.datetime_utils import format_cn_datetime, format_cn_datetime_seconds
@@ -90,6 +97,29 @@ class RecordChatWorker(QThread):
             self.failure.emit(str(exc))
 
 
+class SessionSelectorComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._ensure_valid_fonts()
+
+    def showPopup(self) -> None:
+        self._ensure_valid_fonts()
+        super().showPopup()
+
+    def _ensure_valid_fonts(self) -> None:
+        combo_font = self.font()
+        if combo_font.pointSize() <= 0:
+            combo_font.setPointSize(11)
+        self.setFont(combo_font)
+
+        popup_view = self.view()
+        popup_font = popup_view.font()
+        if popup_font.pointSize() <= 0:
+            popup_font.setPointSize(combo_font.pointSize())
+        popup_view.setFont(popup_font)
+        popup_view.viewport().setFont(popup_font)
+
+
 class StudyPage(QWidget):
     session_selected = Signal(object)
     note_generated = Signal(object)
@@ -114,178 +144,416 @@ class StudyPage(QWidget):
         self.selected_session_id: int | None = None
         self.selected_record_id: int | None = None
         self._sessions_by_id: dict[int, Session] = {}
+        self._session_display_numbers: dict[int, int] = {}
         self._records_by_id: dict[int, Record] = {}
         self._note_worker: GenerateNoteWorker | None = None
         self._chat_worker: RecordChatWorker | None = None
         self._selected_image_path: Path | None = None
 
+        self.page_title_label = QLabel("学习")
+        self.page_title_label.setProperty("role", "pageTitle")
+        self.page_subtitle_label = QLabel("在学习过程中快速记录截图、灵感与问题，不打断你的学习节奏。")
+        self.page_subtitle_label.setProperty("role", "pageSubtitle")
+
+        self.project_badge_label = QLabel("未选择项目")
+        self.project_badge_label.setProperty("role", "badge")
+        self.record_count_badge = QLabel("0 条记录")
+        self.record_count_badge.setProperty("role", "badge")
         self.project_label = QLabel("当前项目：未选择")
-        self.status_label = QLabel("会话状态：not_started")
+        self.project_label.setProperty("role", "muted")
+        self.status_label = QLabel("学习状态：尚未开始记录")
+        self.status_label.setProperty("role", "muted")
         self.started_label = QLabel("开始时间：-")
+        self.started_label.setProperty("role", "muted")
         self.ended_label = QLabel("结束时间：-")
-        self.note_entry_label = QLabel("Session Note：-")
-        self.message_label = QLabel("请选择项目后开始学习。")
+        self.ended_label.setProperty("role", "muted")
+        self.note_entry_label = QLabel("学习笔记：-")
+        self.note_entry_label.setProperty("role", "muted")
+        self.message_label = QLabel("请选择项目并开始记录。")
         self.message_label.setWordWrap(True)
+        self.record_type_label = QLabel("-")
+        self.record_type_label.setProperty("role", "muted")
+        self.record_time_label = QLabel("-")
+        self.record_time_label.setProperty("role", "muted")
+        self.record_session_label = QLabel("-")
+        self.record_session_label.setProperty("role", "muted")
 
         self.session_list = QListWidget()
+        self.session_list.setObjectName("EmbeddedList")
+        self.session_list.setMaximumHeight(220)
         self.session_list.currentItemChanged.connect(self._on_session_selected)
         self.timeline_list = QListWidget()
+        self.timeline_list.setObjectName("TimelineList")
         self.timeline_list.currentItemChanged.connect(self._on_record_selected)
 
-        self.detail_title_label = QLabel("详情预览")
+        self.session_filter_label = QLabel("当前会话")
+        self.session_filter_label.setProperty("role", "sectionHint")
+        self.session_combo = SessionSelectorComboBox()
+        self.session_combo.setObjectName("SessionSelector")
+        self.session_combo.setMinimumHeight(38)
+        self.session_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.session_combo.setMaxVisibleItems(8)
+        self.session_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.session_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.session_combo.setToolTip("点击切换当前项目下的学习会话")
+        self.session_combo.view().setObjectName("SessionSelectorPopup")
+        self.session_combo.view().setCursor(Qt.CursorShape.PointingHandCursor)
+        self.session_combo.currentIndexChanged.connect(self._on_session_combo_changed)
+
+        self.left_toggle_btn = QPushButton("«")
+        self.left_toggle_btn.setProperty("variant", "panelToggle")
+        self.left_toggle_btn.clicked.connect(self._toggle_left_panel)
+        self.right_toggle_btn = QPushButton("»")
+        self.right_toggle_btn.setProperty("variant", "panelToggle")
+        self.right_toggle_btn.clicked.connect(self._toggle_right_panel)
+        self.left_restore_btn = QPushButton("显示记录")
+        self.left_restore_btn.setProperty("variant", "ghost")
+        self.left_restore_btn.clicked.connect(self._toggle_left_panel)
+        self.left_restore_btn.hide()
+        self.right_restore_btn = QPushButton("显示上下文")
+        self.right_restore_btn.setProperty("variant", "ghost")
+        self.right_restore_btn.clicked.connect(self._toggle_right_panel)
+        self.right_restore_btn.hide()
+        self._left_panel_collapsed = False
+        self._right_panel_collapsed = False
+
+        self.detail_title_label = QLabel("预览")
+        self.detail_title_label.setProperty("role", "sectionTitle")
         self.detail_meta_label = QLabel("-")
         self.detail_meta_label.setWordWrap(True)
+        self.detail_meta_label.setProperty("role", "muted")
 
         self.detail_stack = QStackedWidget()
-        self.placeholder_label = QLabel("请选择 Session 与 Record 查看详情。")
+        self.placeholder_label = QLabel("当前选中的记录内容将在这里展示。")
         self.placeholder_label.setWordWrap(True)
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.placeholder_label.setProperty("role", "muted")
 
         self.note_preview_edit = QTextEdit()
         self.note_preview_edit.setReadOnly(True)
+        self.note_preview_edit.setObjectName("InsetCard")
 
         self.record_text_edit = QTextEdit()
         self.record_text_edit.setReadOnly(True)
+        self.record_text_edit.setObjectName("InsetCard")
 
         self.image_name_label = QLabel("图片名称：-")
         self.image_name_label.setWordWrap(True)
+        self.image_name_label.setProperty("role", "muted")
         self.image_preview_label = ImagePreviewLabel()
+        self.image_preview_label.setObjectName("PreviewSurface")
         self.image_preview_label.setText("图片预览区域")
         self.image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_preview_label.setMinimumHeight(260)
-        self.image_preview_label.setStyleSheet("border: 1px solid #d0d0d0; background: #fafafa;")
+        self.image_preview_label.setMinimumHeight(280)
+        self.image_preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.image_preview_label.open_requested.connect(self._on_open_image_viewer)
         self.image_preview_label.context_menu_requested.connect(self._on_image_context_menu)
-        self.ocr_status_label = QLabel("OCR 状态：未处理")
+        self.ocr_status_label = QLabel("OCR 状态：-")
         self.ocr_status_label.setWordWrap(True)
+        self.ocr_status_label.setProperty("role", "muted")
         self.ocr_run_btn = QPushButton("执行 OCR")
         self.ocr_run_btn.clicked.connect(self._on_run_ocr)
         self.ocr_copy_btn = QPushButton("复制 OCR 文本")
         self.ocr_copy_btn.clicked.connect(self._on_copy_ocr_text)
-        self.ocr_text_edit = QTextEdit()
-        self.ocr_text_edit.setReadOnly(True)
-        self.ocr_text_edit.setPlaceholderText("OCR 结果将在这里显示。")
-        self.ocr_text_edit.setMinimumHeight(120)
+        self.ocr_text_label = QLabel("这里会显示 OCR 识别结果。")
+        self.ocr_text_label.setObjectName("InsetCard")
+        self.ocr_text_label.setWordWrap(True)
+        self.ocr_text_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.ocr_text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.ocr_scroll_area = QScrollArea()
+        self.ocr_scroll_area.setObjectName("OcrScrollArea")
+        self.ocr_scroll_area.setWidgetResizable(True)
+        self.ocr_scroll_area.setWidget(self.ocr_text_label)
 
         image_page = QWidget()
         image_layout = QVBoxLayout(image_page)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(12)
         image_layout.addWidget(self.image_name_label)
         image_layout.addWidget(self.image_preview_label, 1)
-        image_layout.addWidget(self.ocr_status_label)
-        ocr_btn_row = QHBoxLayout()
-        ocr_btn_row.addWidget(self.ocr_run_btn)
-        ocr_btn_row.addWidget(self.ocr_copy_btn)
-        image_layout.addLayout(ocr_btn_row)
-        image_layout.addWidget(QLabel("OCR 文本"))
-        image_layout.addWidget(self.ocr_text_edit)
 
         self.detail_stack.addWidget(self.placeholder_label)
         self.detail_stack.addWidget(self.note_preview_edit)
         self.detail_stack.addWidget(self.record_text_edit)
         self.detail_stack.addWidget(image_page)
 
-        self.chat_hint_label = QLabel("AI 对话：请选择 Record 后开始。")
+        self.chat_hint_label = QLabel("选择记录后，可围绕当前内容继续提问。")
         self.chat_hint_label.setWordWrap(True)
+        self.chat_hint_label.setProperty("role", "muted")
         self.chat_history_edit = QTextEdit()
         self.chat_history_edit.setReadOnly(True)
-        self.chat_history_edit.setMinimumHeight(150)
+        self.chat_history_edit.setObjectName("InsetCard")
+        self.chat_history_edit.setMinimumHeight(180)
         self.chat_input_edit = QTextEdit()
-        self.chat_input_edit.setPlaceholderText("输入你对当前记录的问题…")
-        self.chat_input_edit.setFixedHeight(90)
+        self.chat_input_edit.setObjectName("InsetCard")
+        self.chat_input_edit.setPlaceholderText("输入你想继续追问的问题。")
+        self.chat_input_edit.setFixedHeight(96)
         self.chat_input_edit.textChanged.connect(self._update_chat_action_state)
 
         self.ask_ai_btn = QPushButton("开始对话")
         self.ask_ai_btn.clicked.connect(self._on_chat_open)
         self.chat_send_btn = QPushButton("发送")
+        self.chat_send_btn.setProperty("variant", "primary")
         self.chat_send_btn.clicked.connect(self._on_chat_send)
 
-        self.start_btn = QPushButton("开始学习")
-        self.pause_btn = QPushButton("暂停学习")
-        self.resume_btn = QPushButton("继续学习")
-        self.finish_btn = QPushButton("结束学习")
-        self.capture_btn = QPushButton("记录截图")
-        self.text_btn = QPushButton("记录灵感")
-        self.insight_capture_btn = QPushButton("灵感+截图")
+        self.start_btn = QPushButton("开始记录")
+        self.pause_btn = QPushButton("暂停")
+        self.resume_btn = QPushButton("继续")
+        self.finish_btn = QPushButton("结束")
+        self.session_main_btn = QPushButton("开始学习")
+        self.session_main_btn.setProperty("variant", "primary")
+        self.session_main_btn.setMinimumWidth(108)
+        self.session_aux_btn = QPushButton("暂停")
+        self.session_aux_btn.setMinimumWidth(84)
+        self.capture_btn = QPushButton("截图")
+        self.capture_btn.setProperty("variant", "primary")
+        self.text_btn = QPushButton("灵感")
+        self.open_ai_btn = QPushButton("AI 提问")
+        self.insight_capture_btn = QPushButton("灵感 + 截图")
         self.edit_insight_btn = QPushButton("编辑灵感")
         self.generate_note_btn = QPushButton("生成笔记")
-        self.delete_session_btn = QPushButton("删除 Session")
-        self.delete_record_btn = QPushButton("删除 Record")
+        self.generate_note_btn.setMinimumWidth(96)
+        self.delete_session_btn = QPushButton("删除本节")
+        self.delete_record_btn = QPushButton("删除当前记录")
         self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setProperty("variant", "ghost")
+        self.more_btn = QPushButton("更多")
+        self.more_btn.setProperty("variant", "ghost")
+        self.more_btn.setMinimumWidth(40)
+        self.more_menu = QMenu(self)
+        self.delete_record_action = self.more_menu.addAction("删除当前记录")
+        self.delete_session_action = self.more_menu.addAction("删除本节")
 
         self.start_btn.clicked.connect(self._on_start)
         self.pause_btn.clicked.connect(self._on_pause)
         self.resume_btn.clicked.connect(self._on_resume)
         self.finish_btn.clicked.connect(self._on_finish)
+        self.session_main_btn.clicked.connect(self._on_session_main_action)
+        self.session_aux_btn.clicked.connect(self._on_session_aux_action)
         self.capture_btn.clicked.connect(self._on_capture)
         self.text_btn.clicked.connect(self._on_record_text)
+        self.open_ai_btn.clicked.connect(self._on_primary_ask_ai)
         self.insight_capture_btn.clicked.connect(self._on_record_text_with_capture)
         self.edit_insight_btn.clicked.connect(self._on_edit_insight)
         self.generate_note_btn.clicked.connect(self._on_generate_note)
         self.delete_session_btn.clicked.connect(self._on_delete_session)
         self.delete_record_btn.clicked.connect(self._on_delete_record)
         self.refresh_btn.clicked.connect(self.refresh_view)
+        self.more_btn.clicked.connect(self._show_more_menu)
+        self.delete_record_action.triggered.connect(self._on_delete_record)
+        self.delete_session_action.triggered.connect(self._on_delete_session)
+
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        quick_action_row = QHBoxLayout()
+        quick_action_row.setSpacing(8)
+        quick_action_row.addWidget(self.capture_btn)
+        quick_action_row.addWidget(self.text_btn)
+        quick_action_row.addWidget(self.open_ai_btn)
+
+        session_action_row = QHBoxLayout()
+        session_action_row.setSpacing(8)
+        session_action_row.addWidget(self.session_main_btn)
+        session_action_row.addWidget(self.session_aux_btn)
+        session_action_row.addWidget(self.generate_note_btn)
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(8)
+        meta_row.addWidget(self.project_badge_label)
+        meta_row.addWidget(self.record_count_badge)
+        meta_row.addWidget(self.more_btn)
+
+        action_row.addLayout(quick_action_row)
+        action_row.addSpacing(16)
+        action_row.addLayout(session_action_row)
+        action_row.addStretch(1)
+        action_row.addLayout(meta_row)
+
+        header_col = QVBoxLayout()
+        header_col.setSpacing(4)
+        header_col.addWidget(self.page_title_label)
+        header_col.addWidget(self.page_subtitle_label)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(16)
+        header_row.addLayout(header_col)
+        header_row.addStretch(1)
+        header_row.addLayout(action_row)
+
+        self.context_tabs = QTabWidget()
+        self.context_tabs.setDocumentMode(True)
+        self.info_tab = self._build_info_tab()
+        self.ocr_tab = self._build_ocr_tab()
+        self.ai_tab = self._build_ai_tab()
+        self.context_tabs.addTab(self.info_tab, "信息")
+        self.context_tabs.addTab(self.ocr_tab, "OCR")
+        self.context_tabs.addTab(self.ai_tab, "AI")
+        self.left_panel = self._build_timeline_panel()
+        self.preview_panel = self._build_preview_panel()
+        self.right_panel = self._build_context_panel()
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.left_panel)
+        self.splitter.addWidget(self.preview_panel)
+        self.splitter.addWidget(self.right_panel)
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 8)
+        self.splitter.setStretchFactor(2, 2)
+        self.splitter.setSizes([260, 900, 300])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        layout.addLayout(header_row)
+        layout.addWidget(self.splitter, 1)
+
+        self.refresh_view()
+
+    def _build_timeline_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("PanelCard")
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(320)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+        timeline_label = QLabel("学习记录")
+        timeline_label.setProperty("role", "sectionTitle")
+        timeline_hint = QLabel("记录时间线")
+        timeline_hint.setProperty("role", "sectionHint")
+        title_col.addWidget(timeline_label)
+        title_col.addWidget(timeline_hint)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        header_row.addLayout(title_col, 1)
+        header_row.addWidget(self.left_toggle_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(header_row)
+        layout.addWidget(self.session_filter_label)
+        layout.addWidget(self.session_combo)
+        layout.addWidget(self.timeline_list, 1)
+        return panel
+
+    def _build_preview_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("PreviewPanel")
+        panel.setMinimumWidth(520)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+        title_col.addWidget(self.detail_title_label)
+        title_col.addWidget(self.detail_meta_label)
+        preview_hint = QLabel("当前选中的记录内容将在这里展示。")
+        preview_hint.setProperty("role", "sectionHint")
+        title_col.addWidget(preview_hint)
+
+        restore_row = QHBoxLayout()
+        restore_row.setSpacing(8)
+        restore_row.addWidget(self.left_restore_btn)
+        restore_row.addWidget(self.right_restore_btn)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+        header_row.addLayout(title_col, 1)
+        header_row.addLayout(restore_row)
+
+        layout.addLayout(header_row)
+        layout.addWidget(self.detail_stack, 1)
+        return panel
+
+    def _build_context_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("PanelCard")
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(320)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+        context_title = QLabel("上下文")
+        context_title.setProperty("role", "sectionTitle")
+        context_hint = QLabel("围绕当前记录查看信息、OCR结果和AI分析。")
+        context_hint.setProperty("role", "sectionHint")
+        title_col.addWidget(context_title)
+        title_col.addWidget(context_hint)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        header_row.addLayout(title_col, 1)
+        header_row.addWidget(self.right_toggle_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(header_row)
+        layout.addWidget(self.context_tabs, 1)
+        return panel
+
+
+
+
+
+    def _build_info_tab(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(16)
+
+        record_title = QLabel("当前记录")
+        record_title.setProperty("role", "sectionHint")
+        layout.addWidget(record_title)
+
+        record_form = QFormLayout()
+        record_form.addRow("记录类型", self.record_type_label)
+        record_form.addRow("时间", self.record_time_label)
+        record_form.addRow("所属会话", self.record_session_label)
+        layout.addLayout(record_form)
+
+        session_title = QLabel("当前会话")
+        session_title.setProperty("role", "sectionHint")
+        layout.addWidget(session_title)
 
         form = QFormLayout()
         form.addRow("项目", self.project_label)
         form.addRow("状态", self.status_label)
         form.addRow("开始", self.started_label)
         form.addRow("结束", self.ended_label)
-        form.addRow("Note", self.note_entry_label)
-
-        action_row = QHBoxLayout()
-        action_row.addWidget(self.start_btn)
-        action_row.addWidget(self.pause_btn)
-        action_row.addWidget(self.resume_btn)
-        action_row.addWidget(self.finish_btn)
-        action_row.addWidget(self.capture_btn)
-        action_row.addWidget(self.text_btn)
-        action_row.addWidget(self.insight_capture_btn)
-        action_row.addWidget(self.edit_insight_btn)
-        action_row.addWidget(self.generate_note_btn)
-        action_row.addWidget(self.delete_session_btn)
-        action_row.addWidget(self.delete_record_btn)
-        action_row.addWidget(self.refresh_btn)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_session_panel())
-        splitter.addWidget(self._build_timeline_panel())
-        splitter.addWidget(self._build_detail_panel())
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 4)
-        splitter.setStretchFactor(2, 5)
-
-        layout = QVBoxLayout(self)
+        form.addRow("笔记", self.note_entry_label)
         layout.addLayout(form)
-        layout.addLayout(action_row)
         layout.addWidget(self.message_label)
-        layout.addWidget(splitter, 1)
-
-        self.refresh_view()
-
-    def _build_session_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("Session 浏览区"))
-        layout.addWidget(self.session_list, 1)
+        layout.addStretch(1)
         return panel
 
-    def _build_timeline_panel(self) -> QWidget:
+    def _build_ocr_tab(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("Record 时间线"))
-        layout.addWidget(self.timeline_list, 1)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(16)
+        layout.addWidget(self.ocr_status_label)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.ocr_run_btn)
+        button_row.addWidget(self.ocr_copy_btn)
+        layout.addLayout(button_row)
+        layout.addWidget(self.ocr_scroll_area, 1)
         return panel
 
-    def _build_detail_panel(self) -> QWidget:
+    def _build_ai_tab(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("详情预览区"))
-        layout.addWidget(self.detail_title_label)
-        layout.addWidget(self.detail_meta_label)
-        layout.addWidget(self.detail_stack, 1)
-        layout.addWidget(QLabel("Record 智能对话"))
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(16)
         layout.addWidget(self.chat_hint_label)
-        layout.addWidget(self.chat_history_edit)
+        layout.addWidget(self.chat_history_edit, 1)
         layout.addWidget(self.chat_input_edit)
 
         btn_row = QHBoxLayout()
@@ -306,30 +574,55 @@ class StudyPage(QWidget):
 
         self.session_list.blockSignals(True)
         self.timeline_list.blockSignals(True)
+        self.session_combo.blockSignals(True)
         self.session_list.clear()
         self.timeline_list.clear()
-        self.session_list.blockSignals(False)
-        self.timeline_list.blockSignals(False)
+        self.session_combo.clear()
 
         self._sessions_by_id.clear()
+        self._session_display_numbers.clear()
         self._records_by_id.clear()
         self.current_session = None
         self.selected_record_id = None
 
         if self.current_project is None:
             self.project_label.setText("当前项目：未选择")
+            self.project_badge_label.setText("未选择项目")
             self._set_session_labels("not_started", None, None)
-            self.note_entry_label.setText("Session Note：-")
-            self._set_message("未选择项目，无法开始学习和记录。", is_error=True)
+            self.note_entry_label.setText("学习笔记：-")
+            self.session_filter_label.setText("当前会话")
+            self.session_combo.setEnabled(False)
+            self.session_combo.setCursor(Qt.CursorShape.ArrowCursor)
+            self.session_combo.setToolTip("请先选择项目")
+            self.session_combo.setCurrentIndex(-1)
+            self._set_message("未选择项目，无法开始记录。", is_error=True)
             self._set_detail_placeholder("未选择项目。")
             self._set_action_state(in_progress=None)
+            self.session_list.blockSignals(False)
+            self.timeline_list.blockSignals(False)
+            self.session_combo.blockSignals(False)
             self.session_selected.emit(None)
             return
 
         self.project_label.setText(f"当前项目：{self.current_project.name} (ID={self.current_project.id})")
+        self.project_badge_label.setText(self.current_project.name)
 
-        sessions = self.session_service.list_sessions_by_project(self.current_project.id)
+        sessions = sort_sessions_for_display(
+            self.session_service.list_sessions_by_project(self.current_project.id)
+        )
         in_progress = self.session_service.get_in_progress_session()
+        session_count = len(sessions)
+        self.session_filter_label.setText("当前会话 · 仅 1 个会话" if session_count == 1 else "当前会话")
+        self.session_combo.setEnabled(session_count > 1)
+        self.session_combo.setCursor(Qt.CursorShape.PointingHandCursor if session_count > 1 else Qt.CursorShape.ArrowCursor)
+        if session_count <= 0:
+            self.session_combo.setToolTip("当前项目暂无会话")
+        elif session_count == 1:
+            self.session_combo.setToolTip("当前项目仅有 1 个会话")
+        else:
+            self.session_combo.setToolTip("点击切换当前项目下的学习会话")
+
+        self._session_display_numbers = build_session_display_numbers(sessions)
 
         selected_row = -1
         for idx, session in enumerate(sessions):
@@ -340,10 +633,11 @@ class StudyPage(QWidget):
             item = QListWidgetItem(build_session_item_text(session, record_count, has_note))
             item.setData(Qt.ItemDataRole.UserRole, session.id)
             item.setToolTip(
-                f"Session #{session.id}\n状态：{session.status}\nRecord：{record_count}\nNote：{'有' if has_note else '无'}"
+                f"学习会话 #{session.id}\n状态：{session.status}\n记录数量：{record_count}\n学习笔记：{'有' if has_note else '无'}"
             )
             self._apply_session_item_style(item, session)
             self.session_list.addItem(item)
+            self.session_combo.addItem(self._format_session_option_text(session), session.id)
 
             if preferred_session_id is not None and preferred_session_id == session.id:
                 selected_row = idx
@@ -358,6 +652,7 @@ class StudyPage(QWidget):
             selected_row = 0
 
         if selected_row >= 0:
+            self.session_combo.setCurrentIndex(selected_row)
             self.session_list.setCurrentRow(selected_row)
             selected_item = self.session_list.currentItem()
             selected_id = selected_item.data(Qt.ItemDataRole.UserRole)
@@ -366,12 +661,16 @@ class StudyPage(QWidget):
             self._apply_selected_session(selected_session, in_progress, preferred_record_id)
         else:
             self.selected_session_id = None
+            self.session_combo.setCurrentIndex(-1)
             self._set_session_labels("not_started", None, None)
-            self.note_entry_label.setText("Session Note：-")
+            self.note_entry_label.setText("学习笔记：-")
             self.timeline_list.addItem("暂无记录")
-            self._set_detail_placeholder("当前项目还没有 Session。")
+            self._set_detail_placeholder("当前项目还没有学习记录。")
             self.session_selected.emit(None)
 
+        self.session_list.blockSignals(False)
+        self.timeline_list.blockSignals(False)
+        self.session_combo.blockSignals(False)
         self._set_action_state(in_progress)
 
         if in_progress is not None and in_progress.project_id != self.current_project.id:
@@ -380,27 +679,60 @@ class StudyPage(QWidget):
                 is_error=True,
             )
         elif in_progress is not None and in_progress.project_id == self.current_project.id:
-            self._set_message("当前项目存在进行中的学习会话。", is_error=False)
+            self._set_message("当前项目正在记录中。", is_error=False)
         elif sessions:
-            self._set_message("可自由浏览历史 Session 并预览记录与笔记。", is_error=False)
+            self._set_message("可浏览当前项目的学习记录，并查看预览与上下文。", is_error=False)
         else:
-            self._set_message("还没有学习会话，点击“开始学习”创建。", is_error=False)
+            self._set_message("还没有学习记录，点击“开始记录”即可开始。", is_error=False)
+
+    def _on_session_combo_changed(self, index: int) -> None:
+        if index < 0 or index >= self.session_list.count():
+            return
+        self.session_list.setCurrentRow(index)
+
+    def _format_session_option_text(self, session: Session) -> str:
+        status_map = {
+            SESSION_IN_PROGRESS: "进行中",
+            SESSION_PAUSED: "已暂停",
+            SESSION_FINISHED: "已完成",
+        }
+        status_text = status_map.get(session.status, session.status)
+        display_prefix = self._format_session_display_label(session)
+        display_time = session.started_at or session.created_at
+        if display_time is None:
+            started_text = "-"
+        else:
+            started_text = f"{display_time.month}月{display_time.day}日 {display_time:%H:%M}"
+        return f"{display_prefix} · {status_text} · {started_text}"
+
+    def _format_session_display_label(self, session: Session | None) -> str:
+        if session is None:
+            return "当前会话"
+        display_number = self._session_display_numbers.get(session.id)
+        if display_number is None:
+            return "当前会话"
+        return f"第{display_number}节"
 
     def _apply_session_item_style(self, item: QListWidgetItem, session: Session) -> None:
         if session.status == SESSION_IN_PROGRESS:
-            item.setBackground(QColor("#e8f5e9"))
+            item.setBackground(QColor("#16243a"))
+            item.setForeground(QColor("#eaf1fb"))
         elif session.status == SESSION_PAUSED:
-            item.setBackground(QColor("#fff8e1"))
+            item.setBackground(QColor("#1b202a"))
+            item.setForeground(QColor("#d9e0eb"))
 
     def _on_session_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is None:
             self.selected_session_id = None
             self.current_session = None
+            self.session_combo.blockSignals(True)
+            self.session_combo.setCurrentIndex(-1)
+            self.session_combo.blockSignals(False)
             self._set_session_labels("not_started", None, None)
-            self.note_entry_label.setText("Session Note：-")
+            self.note_entry_label.setText("学习笔记：-")
             self.timeline_list.clear()
             self.timeline_list.addItem("暂无记录")
-            self._set_detail_placeholder("未选择 Session。")
+            self._set_detail_placeholder("当前还没有可预览的记录内容。")
             self._set_action_state(self.session_service.get_in_progress_session())
             self.session_selected.emit(None)
             return
@@ -413,12 +745,16 @@ class StudyPage(QWidget):
         if session is None:
             return
 
+        combo_index = self.session_list.row(current)
+        self.session_combo.blockSignals(True)
+        self.session_combo.setCurrentIndex(combo_index)
+        self.session_combo.blockSignals(False)
+
         self.selected_session_id = int(session_id)
         self.selected_record_id = None
         in_progress = self.session_service.get_in_progress_session()
         self._apply_selected_session(session, in_progress, None)
         self._set_action_state(in_progress)
-
     def _on_record_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is None:
             self.selected_record_id = None
@@ -458,29 +794,29 @@ class StudyPage(QWidget):
         self._set_session_labels(session.status, session.started_at, session.ended_at)
 
         note_exists = bool(self.note_service and self.note_service.get_latest_note_for_session(session.id))
-        self.note_entry_label.setText(f"Session Note：{'已生成' if note_exists else '未生成'}")
+        self.note_entry_label.setText(f"学习笔记：{'已生成' if note_exists else '未生成'}")
 
         self._refresh_timeline(session.id, preferred_record_id)
         self.session_selected.emit(session)
 
         if in_progress is not None and session.id == in_progress.id:
-            self._set_message("当前查看：进行中的 Session。", is_error=False)
+            self._set_message("当前查看：正在记录中的内容。", is_error=False)
         elif session.status == SESSION_PAUSED:
-            self._set_message("当前查看：已暂停 Session。", is_error=False)
+            self._set_message("当前查看：已暂停的记录。", is_error=False)
         elif session.status == SESSION_FINISHED:
-            self._set_message("当前查看：历史已完成 Session。", is_error=False)
+            self._set_message("当前查看：已结束的记录。", is_error=False)
         else:
-            self._set_message("当前查看：历史 Session。", is_error=False)
+            self._set_message("当前查看：历史记录。", is_error=False)
 
     def _on_start(self) -> None:
         if self.current_project is None:
-            self._set_message("请先在 Project 页面选择当前项目。", is_error=True)
+            self._set_message("请先在项目页选择当前项目。", is_error=True)
             return
 
         try:
             session = self.session_service.start_session(self.current_project.id)
             self.selected_session_id = session.id
-            self._set_message("开始学习成功。", is_error=False)
+            self._set_message("开始记录成功。", is_error=False)
             self.refresh_view()
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
@@ -488,16 +824,16 @@ class StudyPage(QWidget):
     def _on_pause(self) -> None:
         session = self._get_selected_session()
         if session is None:
-            self._set_message("请先选择要暂停的 Session。", is_error=True)
+            self._set_message("当前没有可暂停的记录。", is_error=True)
             return
         if session.status != SESSION_IN_PROGRESS:
-            self._set_message("仅进行中的 Session 可以暂停。", is_error=True)
+            self._set_message("只有记录中的内容可以暂停。", is_error=True)
             return
 
         try:
             paused = self.session_service.pause_session(session.id)
             self.selected_session_id = paused.id
-            self._set_message("学习已暂停，可稍后继续。", is_error=False)
+            self._set_message("已暂停记录，可稍后继续。", is_error=False)
             self.refresh_view()
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
@@ -505,16 +841,16 @@ class StudyPage(QWidget):
     def _on_resume(self) -> None:
         session = self._get_selected_session()
         if session is None:
-            self._set_message("请先选择要继续的 Session。", is_error=True)
+            self._set_message("当前没有可继续的记录。", is_error=True)
             return
         if session.status != SESSION_PAUSED:
-            self._set_message("仅已暂停的 Session 可以继续。", is_error=True)
+            self._set_message("只有已暂停的记录可以继续。", is_error=True)
             return
 
         try:
             resumed = self.session_service.resume_session(session.id)
             self.selected_session_id = resumed.id
-            self._set_message("已继续学习。", is_error=False)
+            self._set_message("已继续记录。", is_error=False)
             self.refresh_view()
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
@@ -527,11 +863,11 @@ class StudyPage(QWidget):
         try:
             finished = self.session_service.finish_session(session.id)
             if finished.status != SESSION_FINISHED:
-                self._set_message("结束学习失败：状态未切换到 finished。", is_error=True)
+                self._set_message("结束记录失败：状态未正确更新。", is_error=True)
                 return
 
             self.selected_session_id = finished.id
-            self._set_message("结束学习成功。", is_error=False)
+            self._set_message("结束记录成功。", is_error=False)
             self.refresh_view()
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
@@ -657,7 +993,7 @@ class StudyPage(QWidget):
 
         session = self._get_selected_session()
         if session is None:
-            self._set_message("请先选择要生成笔记的 Session。", is_error=True)
+            self._set_message("请先选择要生成笔记的记录会话。", is_error=True)
             return
 
         if self._note_worker is not None and self._note_worker.isRunning():
@@ -666,7 +1002,7 @@ class StudyPage(QWidget):
 
         self.generate_note_btn.setEnabled(False)
         self.generate_note_btn.setText("生成中...")
-        self._set_message(f"正在为 Session #{session.id} 生成笔记（路由：session_note_provider）...", is_error=False)
+        self._set_message(f"正在为记录会话 #{session.id} 生成笔记...", is_error=False)
 
         worker = GenerateNoteWorker(self.note_service, session.id)
         self._note_worker = worker
@@ -681,7 +1017,7 @@ class StudyPage(QWidget):
         provider_text = ""
         if provider:
             provider_text = f"（provider={provider}" + (f"/{model}" if model else "") + ")"
-        self._set_message(f"Session #{result.session_id} 笔记生成并保存成功{provider_text}。", is_error=False)
+        self._set_message(f"记录会话 #{result.session_id} 的笔记已生成并保存{provider_text}。", is_error=False)
         self.note_generated.emit(result)
         self._show_note_overview(result.session_id)
 
@@ -693,29 +1029,33 @@ class StudyPage(QWidget):
         self._set_action_state(self.session_service.get_in_progress_session())
         self._note_worker = None
 
+    def _on_primary_ask_ai(self) -> None:
+        self.context_tabs.setCurrentIndex(2)
+        self._on_chat_open()
+
     def _on_chat_open(self) -> None:
         record = self._get_selected_record()
         if record is None:
-            self._set_message("请先选择 Record。", is_error=True)
+            self._set_message("请先选择一条记录。", is_error=True)
             return
         if self.record_chat_service is None:
-            self._set_message("当前未启用 Record 对话服务。", is_error=True)
+            self._set_message("当前未启用记录对话服务。", is_error=True)
             return
 
         try:
             self.record_chat_service.get_or_create_conversation(record.id)
             self._refresh_chat_panel(record)
-            self._set_message("Record 对话已就绪，可继续提问。", is_error=False)
+            self._set_message("AI 对话已就绪，可继续提问。", is_error=False)
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
 
     def _on_chat_send(self) -> None:
         record = self._get_selected_record()
         if record is None:
-            self._set_message("请先选择 Record。", is_error=True)
+            self._set_message("请先选择一条记录。", is_error=True)
             return
         if self.record_chat_service is None:
-            self._set_message("当前未启用 Record 对话服务。", is_error=True)
+            self._set_message("当前未启用记录对话服务。", is_error=True)
             return
 
         content = self.chat_input_edit.toPlainText().strip()
@@ -730,7 +1070,7 @@ class StudyPage(QWidget):
         self._update_chat_action_state()
         self.chat_send_btn.setEnabled(False)
         self.chat_send_btn.setText("发送中...")
-        self._set_message("正在请求 AI（路由：record_chat_provider）...", is_error=False)
+        self._set_message("正在请求 AI 分析...", is_error=False)
 
         worker = RecordChatWorker(self.record_chat_service, record.id, content)
         self._chat_worker = worker
@@ -747,14 +1087,14 @@ class StudyPage(QWidget):
             self._refresh_chat_panel(record)
 
         if getattr(result, "is_stub", False):
-            self._set_message("图片 Record 当前使用占位回复，后续阶段将支持真实图片问答。", is_error=False)
+            self._set_message("当前图片分析仍为占位回复，后续阶段再接入真实问答。", is_error=False)
         else:
             provider = result.conversation.provider or "-"
             model = result.conversation.model_name or "-"
-            self._set_message(f"Record 对话回复成功（provider={provider}, model={model}）。", is_error=False)
+            self._set_message(f"AI 回复成功（provider={provider}, model={model}）。", is_error=False)
 
     def _on_chat_send_failure(self, error_message: str) -> None:
-        self._set_message(f"Record 对话失败：{self._friendly_ai_error(error_message)}", is_error=True)
+        self._set_message(f"AI 对话失败：{self._friendly_ai_error(error_message)}", is_error=True)
 
     def _on_chat_send_finished(self) -> None:
         self.chat_send_btn.setText("发送")
@@ -768,17 +1108,17 @@ class StudyPage(QWidget):
 
         session = self._get_selected_session()
         if session is None:
-            self._set_message("请先选择要删除的 Session。", is_error=True)
+            self._set_message("请先选择要删除的本节内容。", is_error=True)
             return
 
         if session.status != SESSION_FINISHED:
-            self._set_message("仅允许删除 finished Session。", is_error=True)
+            self._set_message("仅允许删除已结束的本节内容。", is_error=True)
             return
 
         should_delete = QMessageBox.question(
             self,
-            "确认删除 Session",
-            f"确定删除 Session #{session.id} 吗？关联记录会被一并清理。",
+            "确认删除本节",
+            f"确认删除{self._format_session_display_label(session)}吗？\n本节中的所有记录将一并删除，且无法恢复。",
         )
         if should_delete != QMessageBox.StandardButton.Yes:
             return
@@ -792,9 +1132,9 @@ class StudyPage(QWidget):
             self.selected_record_id = None
             if result.warnings:
                 warning_text = "；".join(result.warnings)
-                self._set_message(f"Session 已删除，存在告警：{warning_text}", is_error=False)
+                self._set_message(f"本节已删除，存在提示：{warning_text}", is_error=False)
             else:
-                self._set_message("Session 删除成功。", is_error=False)
+                self._set_message("本节删除成功。", is_error=False)
             self.refresh_view()
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
@@ -802,23 +1142,22 @@ class StudyPage(QWidget):
     def _on_delete_record(self) -> None:
         session = self._get_selected_session()
         if session is None:
-            self._set_message("请先选择 Session。", is_error=True)
+            self._set_message("请先选择记录会话。", is_error=True)
             return
 
         if self.selected_record_id is None:
-            self._set_message("请先选择要删除的 Record。", is_error=True)
+            self._set_message("请先选择要删除的记录。", is_error=True)
             return
 
         record = self._records_by_id.get(self.selected_record_id)
         if record is None:
-            self._set_message("Record 不存在或已被删除。", is_error=True)
+            self._set_message("记录不存在或已被删除。", is_error=True)
             return
 
         should_delete = QMessageBox.question(
             self,
-            "确认删除 Record",
-            "确定删除以下 Record 吗？\n"
-            f"{self._format_record_confirm_text(record)}",
+            "确认删除记录",
+            "确认删除当前记录吗？\n删除后将无法恢复。",
         )
         if should_delete != QMessageBox.StandardButton.Yes:
             return
@@ -829,9 +1168,9 @@ class StudyPage(QWidget):
             self.refresh_view()
             if result.warnings:
                 warning_text = "；".join(result.warnings)
-                self._set_message(f"Record 已删除，存在告警：{warning_text}", is_error=False)
+                self._set_message(f"记录已删除，存在提示：{warning_text}", is_error=False)
             else:
-                self._set_message("Record 删除成功。", is_error=False)
+                self._set_message("记录删除成功。", is_error=False)
         except ServiceError as exc:
             self._set_message(str(exc), is_error=True)
 
@@ -910,7 +1249,7 @@ class StudyPage(QWidget):
         self._set_message("图片路径已复制。", is_error=False)
 
     def _on_copy_ocr_text(self) -> None:
-        text = self.ocr_text_edit.toPlainText().strip()
+        text = self.ocr_text_label.text().strip()
         if not text:
             self._set_message("当前没有可复制的 OCR 文本。", is_error=True)
             return
@@ -921,10 +1260,10 @@ class StudyPage(QWidget):
     def _on_run_ocr(self) -> None:
         record = self._get_selected_record()
         if record is None:
-            self._set_message("请先选择 image Record。", is_error=True)
+            self._set_message("请先选择图片记录。", is_error=True)
             return
         if record.record_type != RECORD_TYPE_IMAGE:
-            self._set_message("仅 image Record 支持 OCR。", is_error=True)
+            self._set_message("只有图片记录支持 OCR。", is_error=True)
             return
         if self.ocr_service is None:
             self._set_message("当前未启用 OCR 服务。", is_error=True)
@@ -947,7 +1286,7 @@ class StudyPage(QWidget):
     def _refresh_ocr_panel(self, record: Record) -> None:
         if self.ocr_service is None:
             self.ocr_status_label.setText("OCR 状态：服务未启用")
-            self.ocr_text_edit.setPlainText("")
+            self.ocr_text_label.setText("")
             self.ocr_run_btn.setEnabled(False)
             self.ocr_run_btn.setText("执行 OCR")
             self.ocr_copy_btn.setEnabled(False)
@@ -960,22 +1299,51 @@ class StudyPage(QWidget):
             status_text += "（mock 模拟）"
         self.ocr_status_label.setText(f"OCR 状态：{status_text}")
         if result.ocr_status == OCR_STATUS_FAILED and result.ocr_error:
-            self.ocr_text_edit.setPlainText(f"OCR 失败：{result.ocr_error}")
+            self.ocr_text_label.setText(f"OCR 失败：{result.ocr_error}")
         else:
-            self.ocr_text_edit.setPlainText(result.ocr_text or "")
+            self.ocr_text_label.setText(result.ocr_text or "")
 
         selected = self._get_selected_record()
         can_run = selected is not None and selected.record_type == RECORD_TYPE_IMAGE
         self.ocr_run_btn.setEnabled(can_run)
         self.ocr_run_btn.setText("重新执行 OCR" if result.ocr_status == OCR_STATUS_COMPLETED else "执行 OCR")
         self.ocr_copy_btn.setEnabled(bool((result.ocr_text or "").strip()))
-
     def _reset_ocr_panel(self) -> None:
         self.ocr_status_label.setText("OCR 状态：-")
-        self.ocr_text_edit.setPlainText("")
+        self.ocr_text_label.setText("")
         self.ocr_run_btn.setText("执行 OCR")
         self.ocr_run_btn.setEnabled(False)
         self.ocr_copy_btn.setEnabled(False)
+
+    def _toggle_left_panel(self) -> None:
+        self._left_panel_collapsed = not self._left_panel_collapsed
+        if self._left_panel_collapsed:
+            self.left_panel.setMinimumWidth(0)
+            self.left_panel.setMaximumWidth(0)
+            self.left_restore_btn.show()
+        else:
+            self.left_panel.setMinimumWidth(260)
+            self.left_panel.setMaximumWidth(320)
+            self.left_restore_btn.hide()
+        self._sync_splitter_sizes()
+
+    def _toggle_right_panel(self) -> None:
+        self._right_panel_collapsed = not self._right_panel_collapsed
+        if self._right_panel_collapsed:
+            self.right_panel.setMinimumWidth(0)
+            self.right_panel.setMaximumWidth(0)
+            self.right_restore_btn.show()
+        else:
+            self.right_panel.setMinimumWidth(300)
+            self.right_panel.setMaximumWidth(320)
+            self.right_restore_btn.hide()
+        self._sync_splitter_sizes()
+
+    def _sync_splitter_sizes(self) -> None:
+        left_size = 0 if self._left_panel_collapsed else 260
+        right_size = 0 if self._right_panel_collapsed else 300
+        center_size = max(900, self.width() - left_size - right_size - 64)
+        self.splitter.setSizes([left_size, center_size, right_size])
 
     @staticmethod
     def _format_ocr_status_label(status: str) -> str:
@@ -1005,6 +1373,7 @@ class StudyPage(QWidget):
         self.timeline_list.blockSignals(False)
 
         records = self.record_service.list_records_by_session(session_id)
+        self.record_count_badge.setText(f"{len(records)} 条记录")
         if not records:
             no_item = QListWidgetItem("暂无记录")
             no_item.setData(Qt.ItemDataRole.UserRole, None)
@@ -1017,7 +1386,7 @@ class StudyPage(QWidget):
         selected_row = -1
         for idx, record in enumerate(records):
             self._records_by_id[record.id] = record
-            item = QListWidgetItem(build_record_item_text(record))
+            item = QListWidgetItem(self._format_record_item_text(record))
             item.setData(Qt.ItemDataRole.UserRole, record.id)
             item.setToolTip(self._format_record_confirm_text(record))
             if record.record_type == RECORD_TYPE_IMAGE:
@@ -1046,11 +1415,15 @@ class StudyPage(QWidget):
         self.delete_record_btn.setEnabled(self.selected_record_id is not None)
 
     def _show_record_detail(self, record: Record) -> None:
-        self.detail_title_label.setText(f"Record #{record.id} 详情")
+        self.detail_title_label.setText("预览")
         self.detail_meta_label.setText(
-            f"Session #{record.session_id} | 类型：{record_display_type(record)} | "
+            f"记录 #{record.id} | 会话 #{record.session_id} | 类型：{self._format_record_type_label(record)} | "
             f"时间：{format_cn_datetime_seconds(record.created_at)}"
         )
+        self.record_type_label.setText(self._format_record_type_label(record))
+        self.record_time_label.setText(format_cn_datetime_seconds(record.created_at))
+        self.record_session_label.setText(f"Session #{record.session_id}")
+
 
         if record.record_type == RECORD_TYPE_IMAGE:
             self.image_name_label.setText(f"图片名称：{record_display_name(record)}")
@@ -1068,14 +1441,10 @@ class StudyPage(QWidget):
                     self.image_preview_label.setPixmap(QPixmap())
                 else:
                     self.image_preview_label.setText("")
-                    scaled = pixmap.scaled(
-                        760,
-                        520,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                    self.image_preview_label.setPixmap(scaled)
+                    self.image_preview_label.setText("")
+                    self.image_preview_label.setPixmap(pixmap)
             self._refresh_ocr_panel(record)
+            self.context_tabs.setCurrentIndex(1)
             self.detail_stack.setCurrentIndex(3)
             self._refresh_chat_panel(record)
             return
@@ -1085,27 +1454,31 @@ class StudyPage(QWidget):
         self._reset_ocr_panel()
         full_text = (record.content or "").strip() or record_preview_text(record, max_len=500)
         self.record_text_edit.setPlainText(full_text)
+        self.context_tabs.setCurrentIndex(2)
         self.detail_stack.setCurrentIndex(2)
         self._refresh_chat_panel(record)
 
     def _show_note_overview(self, session_id: int | None) -> None:
         if session_id is None:
-            self._set_detail_placeholder("请选择 Session。")
+            self._set_detail_placeholder("当前还没有可预览的记录内容。")
             return
 
         if self.note_service is None:
-            self._set_detail_placeholder("当前未启用 Note 服务。")
+            self._set_detail_placeholder("当前未启用笔记服务。")
             return
 
         note = self.note_service.get_latest_note_for_session(session_id)
         if note is None:
-            self._set_detail_placeholder("该 Session 暂无 Note，选择 Record 可查看详情。")
+            self._set_detail_placeholder("当前会话还没有学习笔记，选择记录后可查看详情。")
             return
 
-        self.detail_title_label.setText(f"Session #{session_id} Note 概览")
+        self.detail_title_label.setText("预览")
         self.detail_meta_label.setText(
-            f"标题：{note.title or '-'} | 更新时间：{format_cn_datetime_seconds(note.updated_at)}"
+            f"学习笔记 | 会话 #{session_id} | 更新时间：{format_cn_datetime_seconds(note.updated_at)}"
         )
+        self.record_type_label.setText("学习笔记")
+        self.record_time_label.setText(format_cn_datetime_seconds(note.updated_at))
+        self.record_session_label.setText(f"Session #{session_id}")
         self.note_preview_edit.setPlainText(build_note_preview_text(note))
         self._selected_image_path = None
         self.image_preview_label.set_image_file_path(None)
@@ -1113,23 +1486,27 @@ class StudyPage(QWidget):
         self.image_preview_label.setText("图片预览区域")
         self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(1)
-        self._reset_chat_panel("请选择 Record 后发起智能对话。")
+        self._reset_chat_panel("请选择记录后发起智能对话。")
 
     def _set_detail_placeholder(self, text: str) -> None:
-        self.detail_title_label.setText("详情预览")
+        self.detail_title_label.setText("预览")
         self.detail_meta_label.setText("-")
         self.placeholder_label.setText(text)
+        self.record_count_badge.setText(self.record_count_badge.text())
         self._selected_image_path = None
+        self.record_type_label.setText("-")
+        self.record_time_label.setText("-")
+        self.record_session_label.setText("-")
         self.image_preview_label.set_image_file_path(None)
         self.image_preview_label.setPixmap(QPixmap())
         self.image_preview_label.setText("图片预览区域")
         self._reset_ocr_panel()
         self.detail_stack.setCurrentIndex(0)
-        self._reset_chat_panel("请选择 Record 后发起智能对话。")
+        self._reset_chat_panel("请选择记录后发起智能对话。")
 
     def _refresh_chat_panel(self, record: Record) -> None:
         if self.record_chat_service is None:
-            self._reset_chat_panel("当前未启用 Record AI 对话服务。")
+            self._reset_chat_panel("当前未启用记录 AI 对话服务。")
             return
 
         messages = self.record_chat_service.list_messages_by_record(record.id)
@@ -1140,11 +1517,11 @@ class StudyPage(QWidget):
                 self.chat_hint_label.setText("可围绕该文本记录提问，开始多轮对话。")
             self.chat_history_edit.setPlainText("暂无对话历史。")
         else:
-            self.chat_hint_label.setText("已加载该 Record 的历史对话，可继续追问。")
+            self.chat_hint_label.setText("已加载当前记录的历史对话，可继续追问。")
             role_map = {
                 "user": "你",
                 "assistant": "AI",
-                "system": "System",
+                "system": "系统",
             }
             lines: list[str] = []
             for item in messages:
@@ -1174,6 +1551,48 @@ class StudyPage(QWidget):
         self.ask_ai_btn.setEnabled(can_chat)
         has_input = bool(self.chat_input_edit.toPlainText().strip())
         self.chat_send_btn.setEnabled(can_chat and has_input)
+
+    def _on_session_main_action(self) -> None:
+        if self.session_main_btn.text() == "结束学习":
+            self._on_finish_current_session()
+            return
+        self._on_start()
+
+    def _on_session_aux_action(self) -> None:
+        if self.session_aux_btn.text() == "继续":
+            self._on_resume()
+            return
+        self._on_pause()
+
+    def _on_finish_current_session(self) -> None:
+        session = self._get_selected_session()
+        if session is None:
+            self._set_message("当前没有可结束的学习会话。", is_error=True)
+            return
+
+        try:
+            if session.status == SESSION_PAUSED:
+                resumed = self.session_service.resume_session(session.id)
+                finished = self.session_service.finish_session(resumed.id)
+            else:
+                finished = self.session_service.finish_session(session.id)
+
+            if finished.status != SESSION_FINISHED:
+                self._set_message("结束学习失败：状态未正确更新。", is_error=True)
+                return
+
+            self.selected_session_id = finished.id
+            self._set_message("已结束学习。", is_error=False)
+            self.refresh_view()
+        except ServiceError as exc:
+            self._set_message(str(exc), is_error=True)
+
+    def _show_more_menu(self) -> None:
+        self.delete_record_action.setEnabled(self.delete_record_btn.isEnabled())
+        self.delete_session_action.setEnabled(self.delete_session_btn.isEnabled())
+        menu_pos = self.more_btn.mapToGlobal(self.more_btn.rect().bottomRight())
+        self.more_menu.exec(menu_pos)
+
     def _get_selected_session(self) -> Session | None:
         if self.selected_session_id is None:
             return None
@@ -1186,7 +1605,6 @@ class StudyPage(QWidget):
 
     def _set_action_state(self, in_progress: Session | None) -> None:
         has_project = self.current_project is not None
-        self.start_btn.setEnabled(has_project and in_progress is None)
 
         selected = self._get_selected_session()
         selected_is_active = (
@@ -1203,14 +1621,21 @@ class StudyPage(QWidget):
             and selected.status == SESSION_PAUSED
             and selected.project_id == self.current_project.id
         )
+        can_start = has_project and in_progress is None
         can_resume_selected = selected_is_paused and in_progress is None
 
+        self.start_btn.setEnabled(can_start)
         self.pause_btn.setEnabled(bool(selected_is_active))
         self.resume_btn.setEnabled(bool(can_resume_selected))
         self.finish_btn.setEnabled(bool(selected_is_active))
+
+        session_can_end = bool(selected_is_active or selected_is_paused)
+        self.session_main_btn.setText("结束学习" if session_can_end else "开始学习")
+        self.session_main_btn.setEnabled(session_can_end or can_start)
+        self.session_aux_btn.setText("继续" if selected_is_paused else "暂停")
+        self.session_aux_btn.setEnabled(bool(selected_is_active) or bool(can_resume_selected))
         self.capture_btn.setEnabled(bool(selected_is_active))
         self.text_btn.setEnabled(bool(selected_is_active))
-        self.insight_capture_btn.setEnabled(bool(selected_is_active))
         can_generate = self.note_service is not None and selected is not None
         if self._note_worker is not None and self._note_worker.isRunning():
             can_generate = False
@@ -1224,6 +1649,7 @@ class StudyPage(QWidget):
             and selected_record.record_type == "text"
             and selected_record.is_inspiration
         )
+        self.open_ai_btn.setEnabled(selected_record is not None)
         self.ocr_run_btn.setEnabled(
             selected_record is not None
             and selected_record.record_type == RECORD_TYPE_IMAGE
@@ -1292,7 +1718,7 @@ class StudyPage(QWidget):
         return text
 
     def _set_message(self, text: str, is_error: bool) -> None:
-        color = "#b00020" if is_error else "#2e7d32"
+        color = "#ff7a7a" if is_error else "#9bb4d1"
         self.message_label.setStyleSheet(f"color: {color};")
         self.message_label.setText(text)
 
@@ -1302,9 +1728,38 @@ class StudyPage(QWidget):
         started_at: datetime | None,
         ended_at: datetime | None,
     ) -> None:
-        self.status_label.setText(f"会话状态：{status}")
+        self.status_label.setText(f"学习状态：{self._format_session_status(status)}")
         self.started_label.setText(f"开始时间：{self._format_dt(started_at)}")
         self.ended_label.setText(f"结束时间：{self._format_dt(ended_at)}")
+
+    @staticmethod
+    def _format_session_status(status: str) -> str:
+        mapping = {
+            "not_started": "尚未开始记录",
+            SESSION_IN_PROGRESS: "记录中",
+            SESSION_PAUSED: "已暂停",
+            SESSION_FINISHED: "已结束",
+        }
+        return mapping.get(status, status)
+
+    @staticmethod
+    def _format_record_type_label(record: Record) -> str:
+        if record.record_type == RECORD_TYPE_IMAGE and record.is_inspiration:
+            return "灵感配图"
+        if record.record_type == RECORD_TYPE_IMAGE:
+            return "截图"
+        if record.record_type == "text" and record.is_inspiration:
+            return "灵感"
+        if record.record_type == "text":
+            return "文本"
+        return record.record_type
+
+    def _format_record_item_text(self, record: Record) -> str:
+        created = format_cn_datetime_seconds(record.created_at)
+        preview = record_preview_text(record, max_len=48)
+        if record.record_type == RECORD_TYPE_IMAGE:
+            return f"{created}\n{self._format_record_type_label(record)} · {record_display_name(record)}"
+        return f"{created}\n{self._format_record_type_label(record)} · {preview}"
 
     @staticmethod
     def _format_dt(value: datetime | None) -> str:
@@ -1317,11 +1772,46 @@ class StudyPage(QWidget):
         record_name = record_display_name(record)
         preview = record_preview_text(record, max_len=120)
         return (
-            f"Record #{record.id}\n"
-            f"类型：{record_display_type(record)}\n"
+            f"类型：{StudyPage._format_record_type_label(record)}\n"
             f"名称：{record_name}\n"
             f"时间：{format_cn_datetime_seconds(record.created_at)}\n"
             f"内容：{preview}"
         )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

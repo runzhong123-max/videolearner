@@ -1,5 +1,6 @@
-﻿import sys
+import sys
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.db.database import Database
@@ -22,6 +23,8 @@ from app.services.shortcut_manager import ShortcutManager
 from app.services.shortcut_settings_service import ShortcutSettingsService
 from app.services.session_service import SessionService
 from app.ui.main_window import MainWindow
+from app.ui.theme import apply_app_theme
+from app.utils.runtime_paths import icon_path
 
 
 def main() -> int:
@@ -97,6 +100,11 @@ def main() -> int:
     )
 
     app = QApplication(sys.argv)
+    apply_app_theme(app)
+    app_icon_path = icon_path()
+    if app_icon_path.exists():
+        app.setWindowIcon(QIcon(str(app_icon_path)))
+
     window = MainWindow(
         project_service=project_service,
         session_service=session_service,
@@ -111,6 +119,8 @@ def main() -> int:
         record_chat_service=record_chat_service,
         ocr_service=ocr_service,
     )
+    if app_icon_path.exists():
+        window.setWindowIcon(QIcon(str(app_icon_path)))
     window.show()
     return app.exec()
 

@@ -1,5 +1,6 @@
 ﻿import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,49 @@ _HEADING_ALIASES = {
 
 def session_status_label(status: str) -> str:
     return _STATUS_LABELS.get(status, status)
+
+
+def sort_sessions_for_display(sessions: list[Session]) -> list[Session]:
+    def sort_key(session: Session) -> tuple[datetime, datetime, int]:
+        primary_time = session.started_at or session.created_at or datetime.max
+        fallback_time = session.created_at or session.started_at or datetime.max
+        session_id = session.id if session.id is not None else 0
+        return (primary_time, fallback_time, session_id)
+
+    return sorted(sessions, key=sort_key)
+
+
+def build_session_display_numbers(sessions: list[Session]) -> dict[int, int]:
+    return {
+        session.id: idx
+        for idx, session in enumerate(sort_sessions_for_display(sessions), start=1)
+        if session.id is not None
+    }
+
+
+def session_display_label(session: Session | None, display_numbers: dict[int, int] | None = None) -> str:
+    if session is None:
+        return "本节"
+    if display_numbers is not None and session.id is not None:
+        display_number = display_numbers.get(session.id)
+        if display_number is not None:
+            return f"第{display_number}节"
+    return "本节"
+
+
+def build_note_session_display(
+    project_name: str | None,
+    session: Session | None,
+    display_numbers: dict[int, int] | None = None,
+) -> tuple[str, str]:
+    session_label = session_display_label(session, display_numbers)
+    if project_name:
+        title_text = f"{project_name} · {session_label}学习笔记"
+        source_text = f"来源：{project_name} · {session_label}"
+    else:
+        title_text = f"{session_label}学习笔记"
+        source_text = f"来源：{session_label}"
+    return title_text, source_text
 
 
 def build_session_item_text(

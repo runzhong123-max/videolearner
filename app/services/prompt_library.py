@@ -1,8 +1,8 @@
 ﻿from pathlib import Path
 
-from app.config import BASE_DIR
+from app.utils.runtime_paths import prompts_dir
 
-PROMPTS_DIR = BASE_DIR / "app" / "prompts"
+PROMPTS_DIR = prompts_dir()
 
 PROMPT_KEY_SYSTEM = "system_prompt"
 PROMPT_KEY_NOTE = "note_generation_prompt"

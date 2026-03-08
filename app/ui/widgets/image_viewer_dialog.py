@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent, QPixmap
+from PySide6.QtGui import QIcon, QKeyEvent, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QGraphicsPixmapItem,
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
+
+from app.utils.runtime_paths import icon_path
 
 
 class _ZoomableGraphicsView(QGraphicsView):
@@ -30,6 +32,10 @@ class ImageViewerDialog(QDialog):
         self.image_path = image_path
         self.setWindowTitle(f"图片查看 - {image_path.name}")
         self.resize(1100, 760)
+
+        app_icon = icon_path()
+        if app_icon.exists():
+            self.setWindowIcon(QIcon(str(app_icon)))
 
         self.scene = QGraphicsScene(self)
         self.view = _ZoomableGraphicsView(self)
